@@ -74,6 +74,12 @@ std::shared_ptr<const Capture> Capture::load(const QString &filename, QString &e
     if(!file.open(QIODevice::ReadOnly)) {error=file.errorString(); return {};}
     if(file.size()>maxFileBytes) {error="Capture exceeds the 32 MiB file-size limit"; return {};}
     const auto contents=file.read(maxFileBytes+1);
+    if(file.error()!=QFileDevice::NoError) {error=file.errorString(); return {};}
+    return fromJson(contents,error);
+}
+std::shared_ptr<const Capture> Capture::fromJson(const QByteArray &contents, QString &error) {
+    error.clear();
+    if(contents.size()>maxFileBytes) {error="Capture exceeds the 32 MiB file-size limit"; return {};}
     QJsonParseError parse;
     const auto document=QJsonDocument::fromJson(contents,&parse);
     auto fail=[&error](const QString &reason)->std::shared_ptr<const Capture>{error=reason; return {};};

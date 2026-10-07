@@ -2,9 +2,12 @@
 #include "capturedock.h"
 #include "dsosettings.h"
 #include "trendplot.h"
+#include "librarydialog.h"
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDir>
+#include <QFileInfo>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFrame>
@@ -24,6 +27,7 @@
 #include <QVBoxLayout>
 #include <QTabWidget>
 #include <QScrollArea>
+#include <QSettings>
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -207,10 +211,16 @@ CaptureDock::CaptureDock(const DsoSettings *settings, QWidget *parent)
     body->setObjectName("labWorkbench");
     body->setStyleSheet(QStringLiteral(R"(
         QWidget#labWorkbench { background: #101824; color: #dce7f3; }
+        QWidget#labWorkbench QDialog { background: #101824; color: #dce7f3; }
         QWidget#labWorkbench QLabel, QWidget#labWorkbench QCheckBox { color: #c7d6e6; }
         QWidget#labWorkbench QPushButton, QWidget#labWorkbench QComboBox, QWidget#labWorkbench QDoubleSpinBox {
             background: #203044; color: #e4eef8; border: 1px solid #3b526b; border-radius: 5px; padding: 5px 8px;
         }
+        QWidget#labWorkbench QLineEdit, QWidget#labWorkbench QPlainTextEdit {
+            background: #152132; color: #e4eef8; border: 1px solid #3b526b; border-radius: 5px; padding: 7px;
+            selection-background-color: #2b5771; selection-color: #ffffff;
+        }
+        QWidget#labWorkbench QLineEdit:focus, QWidget#labWorkbench QPlainTextEdit:focus { border-color: #79dfda; }
         QWidget#labWorkbench QPushButton:hover { background: #2e4560; border-color: #62c7d5; }
         QWidget#labWorkbench QPushButton:pressed { background: #355d70; }
         QWidget#labWorkbench QPushButton:checked { background: #284b60; border-color: #79dfda; }
@@ -251,8 +261,10 @@ CaptureDock::CaptureDock(const DsoSettings *settings, QWidget *parent)
     };
     saveButton=button(tr("Save capture…"),[this]{saveCapture();}); saveButton->setObjectName("labSaveCapture");
     button(tr("Open capture…"),[this]{openCapture();});
-    referenceButton=button(tr("Set reference"),[this]{reference=selected; resetMask();});
+    referenceButton=button(tr("Set reference"),[this]{reference=selected; referenceName=selectedName; resetMask();});
     referenceButton->setObjectName("labSetReference");
+    auto library=button(tr("Library…"),[this]{openLibrary();}); library->setObjectName("labLibrary");
+    library->setToolTip(tr("Save the selected capture with a name, notes and tags, or browse saved captures. Loading never changes hardware settings."));
     controls->addStretch();
     auto configure=new QPushButton(tr("Analysis settings"),body); configure->setObjectName("labConfigure"); configure->setCheckable(true);
     configure->setToolTip(tr("Show measurement, reference, mask and session-log settings. This does not change acquisition settings.")); controls->addWidget(configure);
@@ -268,6 +280,7 @@ CaptureDock::CaptureDock(const DsoSettings *settings, QWidget *parent)
     live->setToolTip(tr("Follow newly retained captures. This is a browser setting, not the scope's Run/Stop control."));
     activity->addWidget(record); activity->addWidget(live);
     selectionBadge=new QLabel(body); selectionBadge->setObjectName("labSelectionBadge");
+    selectionBadge->setTextFormat(Qt::PlainText);
     selectionBadge->setToolTip(tr("Capture-browser state only. Use the oscilloscope's acquisition controls for Run/Stop or SINGLE."));
     activity->addWidget(selectionBadge); activity->addStretch();
     logBadge=new QLabel(body); logBadge->setObjectName("labLogBadge"); logBadge->setTextFormat(Qt::PlainText);
@@ -289,7 +302,7 @@ CaptureDock::CaptureDock(const DsoSettings *settings, QWidget *parent)
     offset=new QDoubleSpinBox(body); offset->setDecimals(9); offset->setRange(-1e3,1e3); offset->setSingleStep(.000001);
     comparison->addWidget(offset);
     clearReferenceButton=new QPushButton(tr("Clear reference"),body); comparison->addWidget(clearReferenceButton);
-    connect(clearReferenceButton,&QPushButton::clicked,this,[this]{reference.reset(); resetMask();});
+    connect(clearReferenceButton,&QPushButton::clicked,this,[this]{reference.reset(); referenceName.clear(); resetMask();});
     comparison->addStretch(); referencePage->addLayout(comparison);
     referencePage->addWidget(new QLabel(tr("Solid trace: selected capture   /   Dashed trace: pinned reference   /   Differences use interpolation, never extrapolation."),body));
     auto measurementControls=new QHBoxLayout;
@@ -397,17 +410,17 @@ CaptureDock::CaptureDock(const DsoSettings *settings, QWidget *parent)
     measurements->verticalHeader()->hide();
     measurements->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
     measurements->setMinimumHeight(160);
-    status=new QLabel(body); status->setWordWrap(true); layout->addWidget(status);
+    status=new QLabel(body); status->setTextFormat(Qt::PlainText); status->setWordWrap(true); layout->addWidget(status);
     auto scroll=new QScrollArea(this); scroll->setObjectName("labWorkbenchScroll");
     scroll->setWidgetResizable(true); scroll->setFrameShape(QFrame::NoFrame); scroll->setWidget(body); scroll->setMinimumHeight(300);
     scroll->setStyleSheet("QScrollArea { background: #101824; } QScrollBar {background: #152132;} QScrollBar::handle {background: #426079;}");
     setWidget(scroll);
     connect(list,&QListWidget::currentRowChanged,this,[this](int row) {
         if(row<0 || size_t(row)>=history.frames().size()) return;
-        live->setChecked(false); selected=history.frames()[size_t(row)]; refresh();
+        live->setChecked(false); selected=history.frames()[size_t(row)]; selectedName.clear(); refresh();
     });
     connect(live,&QCheckBox::toggled,this,[this](bool enabled){
-        if(enabled && !history.frames().empty()) {selected=history.frames().back(); refreshList();}
+        if(enabled && !history.frames().empty()) {selected=history.frames().back(); selectedName.clear(); refreshList();}
         refresh();
     });
     connect(record,&QCheckBox::toggled,this,[this]{refresh();});
@@ -438,7 +451,7 @@ void CaptureDock::ingest(const std::shared_ptr<PPresult> &frame) {
     auto capture=Capture::fromResult(*frame,*settings);
     if(!capture) return;
     const bool retained=record->isChecked() && history.append(capture);
-    if(retained && live->isChecked()) selected=capture;
+    if(retained && live->isChecked()) {selected=capture; selectedName.clear();}
     if(retained && maskEnabled->isChecked()) {
         const auto result=maskResult(*capture);
         maskResults[capture]=result;
@@ -499,6 +512,8 @@ void CaptureDock::refresh() {
     plot->maskChannel=size_t(maskChannel->currentIndex());
     plot->maskTolerance=maskEnabled->isChecked() && mask.state!=MaskState::Untestable?mask.tolerance:unavailable;
     selectionBadge->setText(selected?(!record->isChecked()?tr("HISTORY PAUSED  ·  #%1"):live->isChecked()?tr("FOLLOWING LATEST  ·  #%1"):tr("VIEW FROZEN  ·  #%1")).arg(selected->tag):tr("NO CAPTURE"));
+    if(selected && !selectedName.isEmpty()) selectionBadge->setText(selectionBadge->text()+" · "+selectionBadge->fontMetrics().elidedText(selectedName,Qt::ElideRight,150));
+    selectionBadge->setToolTip(tr("Capture-browser state only; not hardware Run/Stop.")+"\n"+selectedName.toHtmlEscaped());
     if(selected && maskEnabled->isChecked()) selectionBadge->setText(selectionBadge->text()+"  ·  "+maskStateName(mask.state));
     if(list->currentItem() && list->currentItem()->isHidden()) selectionBadge->setText(selectionBadge->text()+tr("  ·  outside filter"));
     const QString badgeColor=maskEnabled->isChecked()?(mask.state==MaskState::Fail?"#ffb0b0":mask.state==MaskState::Pass?"#a5efd0":"#ecd09d"):"#bcf0e5";
@@ -581,7 +596,8 @@ void CaptureDock::refresh() {
     status->setToolTip(status->text());
     status->setText(tr("%1 / 128 captures   ·   %2 / 64 MiB   ·   %3 skipped tags   ·   %4   ·   %5\nDisplayed acquisitions only — not gapless. Statistics count new recordings, not history navigation.")
         .arg(history.frames().size()).arg(double(history.bytes())/1048576,0,'f',1).arg(history.skippedTags())
-        .arg(spanMode->currentText(),reference?tr("Reference #%1").arg(reference->tag):tr("No reference pinned")));
+        .arg(spanMode->currentText(),reference?tr("Reference #%1%2").arg(reference->tag)
+            .arg(referenceName.isEmpty()?QString():" · "+referenceName):tr("No reference pinned")));
 }
 void CaptureDock::saveCapture() {
     if(!selected) {QMessageBox::information(this,tr("Save capture"),tr("Select an acquisition first.")); return;}
@@ -598,7 +614,18 @@ void CaptureDock::openCapture() {
     if(path.isEmpty()) return;
     QString error; auto capture=Capture::load(path,error);
     if(!capture) {QMessageBox::warning(this,tr("Open capture"),error); return;}
-    live->setChecked(false); selected=std::move(capture); refreshList(); refresh();
+    live->setChecked(false); selected=std::move(capture); selectedName=QFileInfo(path).fileName(); refreshList(); refresh();
+}
+void CaptureDock::openLibrary() {
+    QSettings preferences;
+    const auto folder=preferences.value("lab/libraryFolder",QDir::homePath()+"/OpenHantekLab/Captures").toString();
+    const auto style=findChild<QWidget*>("labWorkbench")->styleSheet();
+    LibraryDialog dialog(folder,selected,this); dialog.setStyleSheet(style);
+    const auto result=dialog.exec();
+    if(dialog.folder()!=folder) preferences.setValue("lab/libraryFolder",dialog.folder());
+    if(result!=QDialog::Accepted || !dialog.chosen) return;
+    if(dialog.asReference) {reference=dialog.chosen; referenceName=dialog.chosenName; resetMask();}
+    else {live->setChecked(false); selected=dialog.chosen; selectedName=dialog.chosenName; refreshList(); refresh();}
 }
 void CaptureDock::clearHistory() {
     if(history.frames().empty() && !selected) return;
@@ -606,7 +633,7 @@ void CaptureDock::clearHistory() {
     const auto choice=QMessageBox::question(this,tr("Clear capture history"),
         tr("Remove the retained captures and selected view from this session?\nSaved files, the pinned reference and the measurement log are kept.\nHistory recording is paused while you decide."),
         QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel);
-    if(choice==QMessageBox::Yes) {history.clear(); selected.reset(); statistics.clear(); resetMask();}
+    if(choice==QMessageBox::Yes) {history.clear(); selected.reset(); selectedName.clear(); statistics.clear(); resetMask();}
     record->setChecked(recording);
 }
 bool CaptureDock::exportLog() {

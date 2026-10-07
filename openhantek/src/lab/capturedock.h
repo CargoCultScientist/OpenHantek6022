@@ -30,6 +30,7 @@ private:
     const DsoSettings *settings;
     CaptureHistory history;
     std::shared_ptr<const Capture> selected, reference;
+    QString selectedName, referenceName;
     CaptureStatistics statistics;
     MeasurementLog measurementLog;
     quint64 logRevision=0, exportedLogRevision=0;
@@ -60,6 +61,7 @@ private:
     void refresh();
     void saveCapture();
     void openCapture();
+    void openLibrary();
     void clearHistory();
     bool exportLog();
 };

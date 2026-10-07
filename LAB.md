@@ -47,8 +47,8 @@ need bench validation. The existing acquisition/display pipeline is not gapless.
 
 The correctness-only release is on the fork's `main` branch. The additions below
 started on `feature/correctness-and-captures`, followed by `feature/measurement-spans`.
-The workbench followed on `feature/capture-workbench`; the current UI pass is on
-`feature/instrument-ui-patterns`, building on all three.
+The workbench followed on `feature/capture-workbench` and `feature/instrument-ui-patterns`.
+The current development branch is `feature/capture-library`, building on those changes.
 These additions are not silently bundled into the correctness-only release candidate.
 
 Open **View → Capture history & measurements** (`Ctrl+H`). The scope above remains
@@ -98,6 +98,53 @@ other Qt docks, the workbench can be detached for a larger standalone view.
 channel units and clipping flags. Open works in demo mode without a device. This
 initial format is `.ohl.json`, deliberately not the proposed ZIP/NumPy `.ohcap` format.
 See [the format specification](docs/lab-capture-format.md).
+
+### Named capture library
+
+Open **Library…** in the Capture Lab toolbar. **Save selected…** stores the selected
+waveform with a name, notes and comma-separated tags. The library takes a fixed
+snapshot when the dialog opens: the acquisition number is shown beside Save selected,
+and incoming frames cannot replace what you are saving. To keep a mask failure,
+select it in history (or enable Freeze view on failure), then save it here explicitly.
+Tags are user descriptions, not certified pass/fail results. Saving is not automatic.
+
+The default folder is `~/OpenHantekLab/Captures`; **Choose folder…** selects another
+existing folder and remembers that choice in Lab preferences. The default folder is
+created only when you save, not when you browse. Each save creates a distinct bundle,
+even with a repeated name; names and tags are never used as filesystem paths.
+No database, cloud service or external plugin is required. Back up the entire folder.
+
+- Search matches all space-separated terms, case-insensitively, across names, notes
+  and tags. `Ctrl+F` focuses search. Enter in search focuses the list; Enter or a
+  double-click on a list entry opens it. Clear search to return to all indexed entries.
+- **Open for analysis** freezes the workbench on that capture. **Use as reference**
+  replaces only the reference, leaving the selected waveform and Follow latest state
+  unchanged. Both verify and load the samples, then use the existing measurement,
+  alignment and mask rules. Neither applies the saved setup to the hardware.
+- **Edit details…** updates only the description. Samples, completion timestamp and
+  acquisition context remain unchanged. Cancel leaves the stored entry unchanged.
+  Names allow 120 characters; notes 4096; tags up to 16 of 32 characters each. Duplicate
+  tags are collapsed case-insensitively. Imported text is displayed as plain text.
+- **Refresh** rereads metadata after another process changes the folder. Stale edits
+  and opens are rejected with a refresh message rather than silently using a changed
+  entry. File locking coordinates writers from this app.
+
+The browser reads at most 1,000 immediate `capture-*` folders and at most 64 KiB of
+metadata per entry; it does not parse every waveform while searching. This is a
+bounded subset, not necessarily the newest 1,000 entries in a larger folder. Choose
+smaller experiment folders when the scan-limit warning appears. Missing, malformed,
+unsupported or symlinked entries are counted and reported; they are not deleted.
+Waveform files are loaded only on Open/Use as reference and checked against their
+SHA-256 checksum and manifest summary. A checksum detects changes/corruption, not
+authenticity or calibration quality. Keep libraries on trusted local storage.
+
+New saves publish a completed two-file bundle together; description updates use
+[Qt's atomic QSaveFile replacement](https://doc.qt.io/qt-6/qsavefile.html), without
+direct-write fallback. This is not a power-loss-durable database or backup guarantee.
+A crash during creation may leave an ignored `.pending-*` folder; incomplete bundles
+are never presented as saved entries. There is deliberately no in-app deletion yet.
+Existing standalone `.ohl.json` files can be opened in the workbench and saved into
+the library. The library's `capture.ohl.json` also remains independently readable.
 
 ### Measurement spans and expanded readings
 
@@ -215,9 +262,9 @@ external circuit changes that the receipt-time metadata cannot identify.
 
 ### Next implementation milestones
 
-The next useful work is a folder-based capture library with names/notes/tags and
-explicit saving of selected failures, followed by replay fixtures and stronger
-acquisition-settings provenance. Protocol decoding and gapless USB recording remain
+The basic folder-based library, names/notes/tags and explicit saving of selected
+failures are now implemented. Next are waveform previews, richer comparison views,
+replay fixtures and stronger acquisition-settings provenance. Protocol decoding and gapless USB recording remain
 separate projects; they require dependency/licensing checks or hardware validation.
 The installed upstream app, firmware and factory calibration remain untouched.
 

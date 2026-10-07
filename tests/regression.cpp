@@ -20,6 +20,8 @@
 #include "lab/measurements.h"
 #include "lab/mask.h"
 #include "lab/measurementlog.h"
+#include "lab/capturelibrary.h"
+#include "lab/librarydialog.h"
 #include "post/postprocessing.h"
 #include "post/graphgenerator.h"
 #include "mainwindow.h"
@@ -38,6 +40,10 @@
 #include <QAction>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QLineEdit>
+#include <QPlainTextEdit>
+#include <QDialogButtonBox>
+#include <QLockFile>
 
 int verboseLevel = 0;
 
@@ -577,6 +583,158 @@ private slots:
         });
         dock.findChild<QPushButton*>("labClearLog")->click(); QVERIFY(summary->text().contains("0 / 10,000"));
         QVERIFY(collect->isChecked()); QVERIFY(dock.confirmDiscardLog());
+    }
+    void captureLibraryStorage() {
+        QTemporaryDir temp; QVERIFY(temp.isValid());
+        const auto folder=temp.filePath("library"); Lab::CaptureLibrary library(folder);
+        QVERIFY(!library.scan().error.isEmpty()); // Reading never creates a folder.
+        QVERIFY(!QFileInfo::exists(folder));
+        Lab::Capture capture; capture.tag=42; capture.capturedAtMs=12000;
+        capture.channels.push_back({"CH1",UNIT_VOLTS,{{0,1,0,-1,0},.001},true});
+        capture.metadata={{"sentinel","receipt-time context"}};
+        Lab::LibraryEntry entry; QString error;
+        QVERIFY(!library.add(capture,{},entry,error)); QVERIFY(!QFileInfo::exists(folder));
+        QVERIFY2(library.add(capture,{"  Baseline  ","Before load change",{"power"," POWER ","5V"}},entry,error),qPrintable(error));
+        QCOMPARE(entry.annotation.name,QString("Baseline")); QCOMPARE(entry.annotation.tags,QStringList({"power","5V"}));
+        auto loaded=library.load(entry,error); QVERIFY2(loaded,qPrintable(error)); QCOMPARE(loaded->channels[0].signal.samples,capture.channels[0].signal.samples);
+        QCOMPARE(loaded->metadata,capture.metadata);
+        const auto payload=folder+"/"+entry.id+"/capture.ohl.json";
+        QFile file(payload); QVERIFY(file.open(QIODevice::ReadOnly)); const auto original=file.readAll(); file.close();
+        Lab::LibraryEntry updated;
+        QVERIFY(library.update(entry,{"<b>Supply</b>","Ripple under load",{"loaded","rail"}},updated,error));
+        QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(),original); file.close();
+        QVERIFY(!library.update(entry,{"Stale edit",{},{}},entry,error)); QVERIFY(error.contains("changed elsewhere"));
+        QVERIFY(!library.load(entry,error)); // Old search results require explicit refresh after an external edit.
+        QVERIFY(updated.matches("RIPPLE rail")); QVERIFY(!updated.matches("ripple baseline"));
+        auto index=library.scan(); QCOMPARE(index.entries.size(),size_t(1)); QCOMPARE(index.skipped,size_t(0));
+        QVERIFY(library.load(index.entries[0],error));
+        Lab::LibraryEntry copy; QVERIFY(library.add(capture,updated.annotation,copy,error)); QVERIFY(copy.id!=updated.id);
+        QCOMPARE(library.scan().entries.size(),size_t(2)); QVERIFY(library.scan(1).truncated);
+        const auto copyManifest=folder+"/"+copy.id+"/entry.json";
+        QFile manifestFile(copyManifest); QVERIFY(manifestFile.open(QIODevice::ReadOnly));
+        const auto manifestBytes=manifestFile.readAll(); manifestFile.close();
+        auto future=copy.document; future["version"]=99;
+        QVERIFY(manifestFile.open(QIODevice::WriteOnly)); manifestFile.write(QJsonDocument(future).toJson()); manifestFile.close();
+        QCOMPARE(library.scan().skipped,size_t(1)); QVERIFY(!library.update(copy,{"Do not replace",{},{}},copy,error));
+        QVERIFY(manifestFile.open(QIODevice::ReadOnly)); QVERIFY(manifestFile.readAll().contains("99")); manifestFile.close();
+        auto mismatch=copy.document; mismatch["samples"]=6;
+        QVERIFY(manifestFile.open(QIODevice::WriteOnly)); manifestFile.write(QJsonDocument(mismatch).toJson()); manifestFile.close();
+        for(const auto &candidate:library.scan().entries) if(candidate.id==copy.id) {
+            QVERIFY(!library.load(candidate,error)); QVERIFY(error.contains("summary"));
+        }
+        QVERIFY(manifestFile.open(QIODevice::WriteOnly)); manifestFile.write(QByteArray(65537,' ')); manifestFile.close();
+        QCOMPARE(library.scan().skipped,size_t(1));
+        QVERIFY(manifestFile.open(QIODevice::WriteOnly)); manifestFile.write(manifestBytes); manifestFile.close();
+        QLockFile lock(folder+"/.library.lock"); QVERIFY(lock.tryLock(0));
+        QVERIFY(!library.add(capture,{"Locked",{},{}},copy,error)); QVERIFY(error.contains("busy")); lock.unlock();
+        capture.channels[0].signal.interval=-1;
+        QVERIFY(!library.add(capture,{"Invalid",{},{}},copy,error));
+        QCOMPARE(library.scan().entries.size(),size_t(2));
+        QCOMPARE(QDir(folder).entryList({".pending-*"},QDir::Dirs|QDir::Hidden|QDir::NoDotAndDotDot).size(),0);
+        auto bad=updated; bad.id="../escape"; QVERIFY(!library.load(bad,error));
+        // A changed waveform is never returned, even if it is still valid JSON.
+        QVERIFY(file.open(QIODevice::Append)); file.write(" "); file.close();
+        QVERIFY(!library.load(updated,error)); QVERIFY(error.contains("checksum"));
+        // Invalid manifests are counted and reported without hiding valid records.
+        const auto manifest=folder+"/"+updated.id+"/entry.json";
+        QFile metadata(manifest); QVERIFY(metadata.open(QIODevice::WriteOnly)); metadata.write("{}"); metadata.close();
+        index=library.scan(); QCOMPARE(index.skipped,size_t(1)); QCOMPARE(index.entries.size(),size_t(1)); QVERIFY(!index.warnings.isEmpty());
+#ifdef Q_OS_UNIX
+        // Entry and payload symlinks are not followed out of the chosen library.
+        const QString linked="capture-11111111-1111-4111-8111-111111111111";
+        QVERIFY(QFile::link(folder+"/"+copy.id,folder+"/"+linked));
+        index=library.scan(); QCOMPARE(index.skipped,size_t(2));
+        const auto validPayload=folder+"/"+copy.id+"/capture.ohl.json";
+        QVERIFY(QFile::rename(validPayload,temp.filePath("external.json")));
+        QVERIFY(QFile::link(temp.filePath("external.json"),validPayload));
+        QVERIFY(!library.load(copy,error));
+#endif
+        Lab::CaptureAnnotation annotation{QString(121,'x'),{}, {}}; QVERIFY(!annotation.normalize(error));
+        annotation={"Name",QString(4097,'x'),{}}; QVERIFY(!annotation.normalize(error));
+        annotation={"Name",{}, {QString(33,'x')}}; QVERIFY(!annotation.normalize(error));
+    }
+    void captureLibraryUi() {
+        QTemporaryDir temp; QVERIFY(temp.isValid());
+        const auto folder=temp.filePath("captures");
+        QSettings preferences; preferences.setValue("lab/libraryFolder",folder);
+        ScopeDevice device; DsoSettings settings(&device); const auto timebase=settings.scope.horizontal.timebase;
+        Lab::CaptureDock dock(&settings); dock.resize(1300,800); dock.show();
+        auto frame=std::make_shared<PPresult>(1); frame->tag=41; frame->capturedAtMs=12000;
+        frame->modifiableData(0)->voltage={{0,1,0,-1,0},.001}; dock.ingest(frame);
+        auto libraryButton=dock.findChild<QPushButton*>("labLibrary"); QVERIFY(libraryButton);
+        QTimer::singleShot(0,[&]{
+            auto browser=dynamic_cast<Lab::LibraryDialog*>(QApplication::activeModalWidget()); QVERIFY(browser);
+            // Incoming frames must not replace the snapshot taken before the dialog opened.
+            frame=std::make_shared<PPresult>(*frame); frame->tag=42; frame->capturedAtMs+=100; dock.ingest(frame);
+            QTimer::singleShot(0,[]{
+                auto editor=QApplication::activeModalWidget(); QVERIFY(editor);
+                editor->findChild<QLineEdit*>("labAnnotationName")->setText("<b>Supply baseline</b>");
+                editor->findChild<QLineEdit*>("labAnnotationTags")->setText("power, baseline");
+                editor->findChild<QPlainTextEdit*>("labAnnotationNotes")->setPlainText("Before load change\n5 V rail");
+                editor->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Save)->click();
+            });
+            browser->findChild<QPushButton*>("labLibraryAdd")->click();
+            auto items=browser->findChild<QListWidget*>("labLibraryList"); QCOMPARE(items->count(),1);
+            auto title=browser->findChild<QLabel*>("labLibraryTitle"); QCOMPARE(title->textFormat(),Qt::PlainText); QCOMPARE(title->text(),QString("<b>Supply baseline</b>"));
+            QTimer::singleShot(0,[]{
+                auto editor=QApplication::activeModalWidget(); QVERIFY(editor);
+                editor->findChild<QLineEdit*>("labAnnotationName")->clear();
+                QVERIFY(!editor->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Save)->isEnabled());
+                editor->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Cancel)->click();
+            });
+            browser->findChild<QPushButton*>("labLibraryEdit")->click(); QCOMPARE(title->text(),QString("<b>Supply baseline</b>"));
+            QTimer::singleShot(0,[]{
+                auto editor=QApplication::activeModalWidget(); QVERIFY(editor);
+                editor->findChild<QLineEdit*>("labAnnotationName")->setText("Supply baseline revised");
+                editor->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Save)->click();
+            });
+            browser->findChild<QPushButton*>("labLibraryEdit")->click(); QCOMPARE(title->text(),QString("Supply baseline revised"));
+            browser->findChild<QLineEdit*>("labLibrarySearch")->setText("not-present");
+            QVERIFY(!browser->findChild<QPushButton*>("labLibraryOpen")->isEnabled());
+            browser->findChild<QLineEdit*>("labLibrarySearch")->setText("BASELINE rail");
+            QVERIFY(browser->findChild<QPushButton*>("labLibraryOpen")->isEnabled());
+            browser->findChild<QPushButton*>("labLibraryOpen")->click();
+        });
+        libraryButton->click();
+        QVERIFY(dock.findChild<QLabel*>("labSelectionBadge")->text().contains("#41"));
+        QVERIFY(!dock.findChild<QCheckBox*>("labFollowLatest")->isChecked());
+        QCOMPARE(settings.scope.horizontal.timebase,timebase);
+        auto index=Lab::CaptureLibrary(folder).scan(); QCOMPARE(index.entries.size(),size_t(1)); QCOMPARE(index.entries[0].tag,41U);
+        QCOMPARE(index.entries[0].annotation.name,QString("Supply baseline revised"));
+        dock.findChild<QCheckBox*>("labFollowLatest")->setChecked(true);
+        QTimer::singleShot(0,[&]{
+            auto browser=dynamic_cast<Lab::LibraryDialog*>(QApplication::activeModalWidget()); QVERIFY(browser);
+            browser->findChild<QPushButton*>("labLibraryReference")->click();
+        });
+        libraryButton->click();
+        QVERIFY(dock.findChild<QCheckBox*>("labFollowLatest")->isChecked());
+        QVERIFY(dock.findChild<QLabel*>("labSelectionBadge")->text().contains("#42"));
+        QCOMPARE(stringToValue(dock.findChild<QTableWidget*>("labMeasurements")->item(0,9)->text(),UNIT_VOLTS),0.);
+        QCOMPARE(settings.scope.horizontal.timebase,timebase); preferences.remove("lab/libraryFolder");
+        // A corrupt payload remains visible as metadata, but Open reports the
+        // problem and leaves the browser open instead of accepting bad data.
+        Lab::LibraryDialog corruptBrowser(folder,{}); corruptBrowser.show();
+        QFile payload(folder+"/"+index.entries[0].id+"/capture.ohl.json");
+        QVERIFY(payload.open(QIODevice::Append)); payload.write(" "); payload.close();
+        corruptBrowser.findChild<QPushButton*>("labLibraryOpen")->click();
+        QVERIFY(!corruptBrowser.chosen); QVERIFY(corruptBrowser.isVisible());
+        QVERIFY(corruptBrowser.findChild<QLabel*>("labLibraryMessage")->text().contains("checksum"));
+    }
+    void libraryVisualSmoke() {
+        QTemporaryDir temp; QVERIFY(temp.isValid()); ScopeDevice device; DsoSettings settings(&device);
+        Lab::CaptureDock dock(&settings);
+        auto capture=std::make_shared<Lab::Capture>(); capture->capturedAtMs=QDateTime::currentMSecsSinceEpoch();
+        capture->channels.push_back({"CH1 · 5 V rail",UNIT_VOLTS,{{0,1,0,-1,0},.001},true});
+        Lab::CaptureLibrary library(temp.path()); Lab::LibraryEntry entry; QString error;
+        const QStringList names={"5 V rail · unloaded baseline","Load step · 250 mA","Startup transient · repeat 2","Ripple after capacitor change"};
+        for(int i=0;i<names.size();++i) {
+            capture->tag=100+i;
+            QVERIFY(library.add(*capture,{names[i],"Bench note: CH1 on the output rail.\n\nCompare against the unloaded baseline before changing the circuit.\nSaved samples retain their original acquisition context.",{"power-supply",i==0?"baseline":"load-test"}},entry,error));
+        }
+        Lab::LibraryDialog browser(temp.path(),capture); browser.setStyleSheet(dock.findChild<QWidget*>("labWorkbench")->styleSheet());
+        browser.resize(1020,640); browser.show(); QCoreApplication::processEvents();
+        QVERIFY(browser.width()<=1020); QVERIFY(browser.height()<=640);
+        if(qEnvironmentVariableIsSet("OH_LIBRARY_SCREENSHOT")) QVERIFY(browser.grab().save(qEnvironmentVariable("OH_LIBRARY_SCREENSHOT")));
     }
     void workbenchVisualSmoke() {
         ScopeDevice device; DsoSettings settings(&device);

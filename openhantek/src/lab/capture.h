@@ -27,6 +27,7 @@ struct Capture {
     static std::shared_ptr<const Capture> fromResult(const PPresult &, const DsoSettings &);
     bool save(const QString &filename, QString &error) const;
     static std::shared_ptr<const Capture> load(const QString &filename, QString &error);
+    static std::shared_ptr<const Capture> fromJson(const QByteArray &contents, QString &error);
 };
 class CaptureHistory {
 public:
