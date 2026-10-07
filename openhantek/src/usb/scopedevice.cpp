@@ -122,6 +122,7 @@ ScopeDevice::~ScopeDevice() {
     if ( device != nullptr )
         libusb_unref_device( device );
     device = nullptr;
+    if (!realHW) delete model; // Demo devices own their model; hardware models belong to the registry.
 }
 
 

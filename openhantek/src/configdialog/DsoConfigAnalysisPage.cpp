@@ -27,7 +27,7 @@ DsoConfigAnalysisPage::DsoConfigAnalysisPage( DsoSettings *settings, QWidget *pa
     minimumMagnitudeLayout->addWidget( minimumMagnitudeSpinBox );
     minimumMagnitudeLayout->addWidget( minimumMagnitudeUnitLabel );
 
-    reuseFftPlanCheckBox = new QCheckBox( tr( "Optimize FFT (slower startup, but lower CPU load)" ) );
+    reuseFftPlanCheckBox = new QCheckBox( tr( "Reuse FFT plans (automatically rebuilt when record length changes)" ) );
     reuseFftPlanCheckBox->setChecked( settings->analysis.reuseFftPlan );
 
     spectrumLayout = new QGridLayout();

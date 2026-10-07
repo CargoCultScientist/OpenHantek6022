@@ -108,6 +108,7 @@ int Triggering::searchTriggerPoint( DSOsamples &result, Dso::Slope dsoSlope, int
 
 
 int Triggering::searchTriggeredPosition( DSOsamples &result ) {
+    triggeredPositionRaw = 0; // also clear when a disabled or empty channel returns early
     static Dso::Slope nextSlope = Dso::Slope::Positive; // for alternating slope mode X
     ChannelID channel = ChannelID( controlsettings.trigger.source );
     // Trigger channel not in use
@@ -155,13 +156,18 @@ int Triggering::searchTriggeredPosition( DSOsamples &result ) {
 bool Triggering::provideTriggeredData( DSOsamples &result ) {
     if ( scope->verboseLevel > 4 )
         qDebug() << "    Triggering::provideTriggeredData()" << result.tag;
-    static DSOsamples triggeredResult; // storage for last triggered trace samples
     if ( result.triggeredPosition ) {  // live trace has triggered
         // Use this trace and save it also
         triggeredResult.data = result.data;
         triggeredResult.samplerate = result.samplerate;
         triggeredResult.clipped = result.clipped;
         triggeredResult.triggeredPosition = result.triggeredPosition;
+        triggeredResult.tag = result.tag;
+        triggeredResult.capturedAtMs = result.capturedAtMs;
+        triggeredResult.armGeneration = result.armGeneration;
+        triggeredResult.pulseWidth1 = result.pulseWidth1;
+        triggeredResult.pulseWidth2 = result.pulseWidth2;
+        triggeredResult.mathVoltageUnit = result.mathVoltageUnit;
         result.liveTrigger = true;
     } else if ( controlsettings.trigger.mode == Dso::TriggerMode::NORMAL ) { // Not triggered in NORMAL mode
         // Use saved trace (even if it is empty)
@@ -169,6 +175,12 @@ bool Triggering::provideTriggeredData( DSOsamples &result ) {
         result.samplerate = triggeredResult.samplerate;
         result.clipped = triggeredResult.clipped;
         result.triggeredPosition = triggeredResult.triggeredPosition;
+        result.tag = triggeredResult.tag;
+        result.capturedAtMs = triggeredResult.capturedAtMs;
+        result.armGeneration = triggeredResult.armGeneration;
+        result.pulseWidth1 = triggeredResult.pulseWidth1;
+        result.pulseWidth2 = triggeredResult.pulseWidth2;
+        result.mathVoltageUnit = triggeredResult.mathVoltageUnit;
         result.liveTrigger = false; // show red "TR" top left
     } else {                        // Not triggered and not NORMAL mode
         // Use the free running trace, discard history

@@ -17,6 +17,7 @@
 #include "mathchannel.h"
 #include "scopesettings.h"
 #include "triggering.h"
+#include "singlecapture.h"
 
 #include "hantekprotocol/controlcode.h"
 #include "hantekprotocol/definitions.h"
@@ -39,6 +40,8 @@ struct Raw {
     unsigned gainValue[ 2 ] = { 1, 1 }; // 1,2,5,10,..
     unsigned gainIndex[ 2 ] = { 7, 7 }; // index 0..7
     unsigned tag = 0;
+    std::uint64_t armGeneration = 0;
+    qint64 capturedAtMs = 0;
     bool freeRun = false;  // small buffer, no trigger
     bool valid = false;    // samples can be processed
     bool rollMode = false; // one complete buffer received, start to roll
@@ -54,6 +57,7 @@ struct Raw {
 class HantekDsoControl : public QObject {
     Q_OBJECT
     friend CapturingThread;
+    friend class RegressionTests;
 
   public:
     enum class DeviceConnectionState { Connected, Parked, Rebinding };
@@ -124,7 +128,7 @@ class HantekDsoControl : public QObject {
     /// \brief Stops the device.
     void quitSampling();
 
-    /// \brief Saves calibration settings e.g. to the scope's EEPROM
+    /// \brief Saves calibration settings locally. Never writes factory EEPROM.
     void prepareForShutdown();
 
   private:
@@ -140,8 +144,7 @@ class HantekDsoControl : public QObject {
     bool replaceCalibrationEEPROM = false;
     Dso::ErrorCode getCalibrationFromIniFile();
     Dso::ErrorCode getCalibrationFromEEPROM();
-    Dso::ErrorCode updateCalibrationValues( bool useEEPROM = false );
-    Dso::ErrorCode writeCalibrationToEEPROM();
+    Dso::ErrorCode updateCalibrationValues();
 
     /// Get the number of samples that are expected returned by the scope.
     /// In rolling mode this depends on the usb speed and packet size.
@@ -177,7 +180,7 @@ class HantekDsoControl : public QObject {
     DeviceConnectionState deviceConnectionState = DeviceConnectionState::Connected;
     bool resumeSamplingAfterReconnect = false;
     bool deviceNotConnected(); ///< USB status, always false for demo device
-    bool samplingUI = false;   ///< true, if the oscilloscope is taking samples
+    std::atomic<bool> samplingUI {false}; ///< shared with the USB capture thread
 
     // Device setup
     const DSOModel *model;                          ///< The attached scope model
@@ -191,17 +194,25 @@ class HantekDsoControl : public QObject {
     unsigned expectedSampleCount = 0; ///< The expected total number of samples at
                                       /// the last check before sampling started
     bool calibrationHasChanged = false;
+    bool calibrationActive = false;
+    SingleCapture singleCapture;
+    unsigned lastTag = UINT32_MAX;
+    Dso::TriggerMode lastTriggerMode = Dso::TriggerMode::AUTO;
     std::unique_ptr< QSettings > calibrationSettings;
     double offsetCorrection[ HANTEK_GAIN_STEPS ][ HANTEK_CHANNEL_NUMBER ];
     double gainCorrection[ HANTEK_GAIN_STEPS ][ HANTEK_CHANNEL_NUMBER ];
-    bool capturing = false;
-    bool samplingStarted = false;
+    std::atomic<bool> capturing {false};
+    std::atomic<bool> samplingStarted {false};
     bool stateMachineRunning = false;
     int acquireInterval = 0;
     int displayInterval = 0;
     unsigned activeChannels = 2;
     bool refresh = false; // parameter changed -> new raw to result conversion and trigger search needed
-    void requestRefresh( bool active = true ) { refresh = active; }
+    void requestRefresh( bool active = true ) {
+        refresh = active;
+        if (active && samplingUI && controlsettings.trigger.mode == Dso::TriggerMode::SINGLE)
+            singleCapture.arm(); // Changed settings cannot accept an acquisition already in flight.
+    }
     bool refreshNeeded() {
         bool changed = refresh;
         refresh = false;
@@ -320,7 +331,7 @@ class HantekDsoControl : public QObject {
   signals:
     void showSamplingStatus( bool enabled );                   ///< The oscilloscope started/stopped sampling/waiting for trigger
     void statusMessage( const QString &message, int timeout ); ///< Status message about the oscilloscope
-    void samplesAvailable( const DSOsamples *samples );        ///< New sample data is available
+    void samplesAvailable( std::shared_ptr<const DSOsamples> samples ); ///< Immutable, owned frame
 
     /// The available samplerate range has changed
     void samplerateLimitsChanged( double minimum, double maximum );

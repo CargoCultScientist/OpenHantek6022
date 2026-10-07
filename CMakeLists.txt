@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.12 FATAL_ERROR)
 project(OpenHantek)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+include(CTest)
 
 find_package(Git)
 
@@ -108,4 +111,3 @@ add_custom_target(
 
 # Use CPack to make tgz/deb/rpm/zip installer packages
 include(cmake/CPackInfos.cmake)
-

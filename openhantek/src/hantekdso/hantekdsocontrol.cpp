@@ -8,6 +8,7 @@
 #include <QtCore>
 
 #include "hantekdsocontrol.h"
+#include "calibrationsafety.h"
 #include "mathchannel.h"
 #include "scopesettings.h"
 #include "usb/scopedevice.h"
@@ -22,7 +23,7 @@ HantekDsoControl::HantekDsoControl( ScopeDevice *device, const DSOModel *model, 
 
     if ( verboseLevel > 1 )
         qDebug() << " HantekDsoControl::HantekDsoControl()";
-    qRegisterMetaType< DSOsamples * >();
+    qRegisterMetaType< std::shared_ptr<const DSOsamples> >();
     qRegisterMetaType< QList< double > >();
 
     if ( device && specification->fixedUSBinLength )
@@ -51,14 +52,7 @@ void HantekDsoControl::prepareForShutdown() {
     if ( verboseLevel > 1 )
         qDebug() << " HDC::prepareForShutdown()";
     calibrateOffset( false );
-    bool canUseCalibrationEEPROM = false;
-    {
-        QReadLocker locker( &scopeDeviceLock );
-        canUseCalibrationEEPROM = scopeDevice && deviceConnectionState == DeviceConnectionState::Connected &&
-                                  scopeDevice->isConnected() && scopeDevice->isRealHW() &&
-                                  specification->hasCalibrationEEPROM;
-    }
-    updateCalibrationValues( canUseCalibrationEEPROM );
+    updateCalibrationValues(); // Calibration is local-only; shutdown must never write factory EEPROM.
 }
 
 
@@ -343,17 +337,21 @@ Dso::ErrorCode HantekDsoControl::setTriggerMode( Dso::TriggerMode mode ) {
 
     if ( verboseLevel > 2 )
         qDebug() << "  HDC::setTriggerMode()" << int( mode );
-    static Dso::TriggerMode lastMode;
     controlsettings.trigger.mode = mode;
+    if ( mode == Dso::TriggerMode::SINGLE ) {
+        singleCapture.arm();
+        triggering->resetTriggeredPositionRaw();
+        requestRefresh(false);
+    }
     if ( Dso::TriggerMode::SINGLE != mode )
         enableSamplingUI();
     // trigger mode changed NONE <-> !NONE
-    if ( ( Dso::TriggerMode::ROLL == mode && Dso::TriggerMode::ROLL != lastMode ) ||
-         ( Dso::TriggerMode::ROLL != mode && Dso::TriggerMode::ROLL == lastMode ) ) {
+    if ( ( Dso::TriggerMode::ROLL == mode && Dso::TriggerMode::ROLL != lastTriggerMode ) ||
+         ( Dso::TriggerMode::ROLL != mode && Dso::TriggerMode::ROLL == lastTriggerMode ) ) {
         restartSampling(); // invalidate old samples
         raw.freeRun = Dso::TriggerMode::ROLL == mode;
     }
-    lastMode = mode;
+    lastTriggerMode = mode;
     requestRefresh();
     return Dso::ErrorCode::NONE;
 }
@@ -517,8 +515,11 @@ void HantekDsoControl::restartSampling() {
 void HantekDsoControl::enableSamplingUI( bool enabled ) {
     if ( verboseLevel > 3 )
         qDebug() << "   HDC::enableSampling()" << enabled;
-    if ( enabled && triggering && controlsettings.trigger.mode == Dso::TriggerMode::SINGLE )
+    if ( enabled && triggering && controlsettings.trigger.mode == Dso::TriggerMode::SINGLE ) {
+        singleCapture.arm();
+        requestRefresh(false);
         triggering->resetTriggeredPositionRaw(); // invalidate previous result, wait for new trigger
+    }
     else if ( controlsettings.trigger.mode == Dso::TriggerMode::ROLL )
         samplingStarted = enabled; // start / stop roll mode sampling (almost) immediately
     samplingUI = enabled;
@@ -538,6 +539,12 @@ unsigned HantekDsoControl::getRecordLength() const {
 
 
 Dso::ErrorCode HantekDsoControl::getCalibrationFromIniFile() {
+    if ( calibrationSettings && calibrationHasChanged ) {
+        const auto saved = updateCalibrationValues();
+        if ( saved != Dso::ErrorCode::NONE )
+            return saved;
+    }
+    calibrationActive = false;
     // Persistent storage: unique offset/gain calibration file:
     // Linux, Unix, macOS: "$HOME/.config/OpenHantek/DSO-6022BE_NNNNNNNNNNNN_calibration.ini"
     // Windows: "%APPDATA%\OpenHantek\DSO-6022BE_NNNNNNNNNNNN_calibration.ini"
@@ -587,7 +594,7 @@ Dso::ErrorCode HantekDsoControl::getCalibrationFromIniFile() {
     calibrationSettings->endGroup(); // eeprom
 
     if ( replaceCalibrationEEPROM ) // values created by python tool "calibrate_6022.py" replace the EEPROM content
-        memset( controlsettings.cmdGetCalibration.data(), 0xFF, sizeof( CalibrationValues ) );
+        memset( controlsettings.calibrationValues, 0xFF, sizeof( CalibrationValues ) );
     else // enhance the intrinsic calibration values from EEPROM
         getCalibrationFromEEPROM();
 
@@ -595,19 +602,17 @@ Dso::ErrorCode HantekDsoControl::getCalibrationFromIniFile() {
 }
 
 
-Dso::ErrorCode HantekDsoControl::updateCalibrationValues( bool useEEPROM ) {
+Dso::ErrorCode HantekDsoControl::updateCalibrationValues() {
     if ( calibrationHasChanged ) {
         if ( verboseLevel > 2 )
-            qDebug() << "  Write calibration data into" << ( useEEPROM ? "EEPROM" : "iniFile" );
+            qDebug() << "  Write calibration data into local ini file";
 
         calibrationSettings->beginGroup( "gain" );
         for ( int ch = 0; ch < HANTEK_CHANNEL_NUMBER; ++ch ) {
             calibrationSettings->beginGroup( "ch" + QString::number( ch ) );
             int index = 0;
-            double gain = 1.0;
             for ( const auto &g : model->spec()->gain ) {
-                if ( !useEEPROM )
-                    gain = round( 100.0 * gainCorrection[ index ][ ch ] ) / 100.0;
+                const double gain = gainCorrection[ index ][ ch ];
                 calibrationSettings->setValue( QString::number( int( g.Vdiv * 1000 ) ) + "mV", gain );
                 // qDebug() << QString::number( int( g.Vdiv * 1000 ) ) + "mV" << gain;
                 ++index;
@@ -620,10 +625,8 @@ Dso::ErrorCode HantekDsoControl::updateCalibrationValues( bool useEEPROM ) {
         for ( int ch = 0; ch < HANTEK_CHANNEL_NUMBER; ++ch ) {
             calibrationSettings->beginGroup( "ch" + QString::number( ch ) );
             int index = 0;
-            double offset = 0.0;
             for ( const auto &g : model->spec()->gain ) {
-                if ( !useEEPROM )
-                    offset = round( 100.0 * offsetCorrection[ index ][ ch ] ) / 100.0;
+                const double offset = offsetCorrection[ index ][ ch ];
                 calibrationSettings->setValue( QString::number( int( g.Vdiv * 1000 ) ) + "mV", offset );
                 // qDebug() << QString::number( int( g.Vdiv * 1000 ) ) + "mV" << offset;
                 ++index;
@@ -633,17 +636,26 @@ Dso::ErrorCode HantekDsoControl::updateCalibrationValues( bool useEEPROM ) {
         calibrationSettings->endGroup();
 
         calibrationSettings->beginGroup( "eeprom" );
-        calibrationSettings->setValue( "replace_eeprom", !useEEPROM );
+        // Preserve the baseline the corrections were measured against, regardless of connectivity.
+        calibrationSettings->setValue( "replace_eeprom", replaceCalibrationEEPROM );
         calibrationSettings->endGroup(); // eeprom
 
-        if ( useEEPROM )
-            writeCalibrationToEEPROM();
+        calibrationSettings->sync();
+        if ( calibrationSettings->status() != QSettings::NoError ) {
+            emit statusMessage(tr("Could not save local calibration. Factory EEPROM was not changed."), 0);
+            return Dso::ErrorCode::CONNECTION;
+        }
+        calibrationHasChanged = false;
     }
     return Dso::ErrorCode::NONE;
 }
 
 
 Dso::ErrorCode HantekDsoControl::getCalibrationFromEEPROM() {
+    if ( !specification->hasCalibrationEEPROM ) {
+        memset(controlsettings.calibrationValues, 0xFF, sizeof(CalibrationValues));
+        return Dso::ErrorCode::NONE;
+    }
     // Get calibration data from EEPROM
     if ( verboseLevel > 2 )
         qDebug() << "  HDC::getCalibrationFromEEPROM()";
@@ -655,7 +667,7 @@ Dso::ErrorCode HantekDsoControl::getCalibrationFromEEPROM() {
         if ( realHardware && specification->hasCalibrationEEPROM )
             errorCode = scopeDevice->controlRead( &controlsettings.cmdGetCalibration );
     }
-    if ( errorCode < 0 ) {
+    if ( errorCode != int(sizeof(CalibrationValues)) ) {
         // invalidate the calibration values.
         memset( controlsettings.calibrationValues, 0xFF, sizeof( CalibrationValues ) );
         if ( realHardware ) {
@@ -697,63 +709,10 @@ Dso::ErrorCode HantekDsoControl::getCalibrationFromEEPROM() {
 }
 
 
-#define TRANS_TYPE_READ 0xc0
-#define TRANS_TYPE_WRITE 0x40
-#define EEPROM 0xa2
-
-Dso::ErrorCode HantekDsoControl::writeCalibrationToEEPROM() {
-    QReadLocker locker( &scopeDeviceLock );
-    if ( !scopeDevice || deviceConnectionState != DeviceConnectionState::Connected || !scopeDevice->isConnected() ||
-         !scopeDevice->isRealHW() )
-        return Dso::ErrorCode::CONNECTION;
-
-    uint8_t type = TRANS_TYPE_WRITE;
-    uint8_t request = EEPROM;
-
-    int value = 8;
-    int index = 0;
-    typedef uint8_t *uint8_p;
-
-    // save raw offset values
-    int ret = scopeDevice->controlTransfer( type, request, uint8_p( &controlsettings.correctionValues->off ),
-                                            sizeof( CalibrationValues::off ), value, index );
-    if ( ret < 0 ) {
-        fprintf( stderr, "Unable to control transfer\n" );
-        perror( "libusb_control_transfer" );
-        return Dso::ErrorCode::CONNECTION;
-    }
-    // save gain values
-    value += int( sizeof( CalibrationValues::off ) );
-    ret = scopeDevice->controlTransfer( type, request, uint8_p( &controlsettings.correctionValues->gain ),
-                                        sizeof( CalibrationValues::gain ), value, index );
-    if ( ret < 0 ) {
-        fprintf( stderr, "Unable to control transfer\n" );
-        perror( "libusb_control_transfer" );
-        return Dso::ErrorCode::CONNECTION;
-    }
-
-    // save fine offset values
-    value += int( sizeof( CalibrationValues::gain ) );
-    ret = scopeDevice->controlTransfer( type, request, uint8_p( &controlsettings.correctionValues->fine ),
-                                        sizeof( CalibrationValues::fine ), value, index );
-    if ( ret < 0 ) {
-        fprintf( stderr, "Unable to control transfer\n" );
-        perror( "libusb_control_transfer" );
-        return Dso::ErrorCode::CONNECTION;
-    }
-
-    return Dso::ErrorCode::NONE;
-}
-
-
 void HantekDsoControl::calibrateOffset( bool enable ) {
-    if ( enable ) {
-        if ( !scope->liveCalibrationActive )
-            memcpy( controlsettings.correctionValues, controlsettings.calibrationValues, sizeof( CalibrationValues ) );
-    } else {
-        if ( scope->liveCalibrationActive )
-            calibrationHasChanged = true;
-    }
+    calibrationActive = enable;
+    if ( !enable )
+        updateCalibrationValues();
 }
 
 
@@ -827,6 +786,8 @@ static uint8_t offsetToFine( double offset ) {
 
 void HantekDsoControl::convertRawDataToSamples() {
     QReadLocker rawLocker( &raw.lock );
+    if (!raw.valid || !raw.channels || !raw.oversampling || raw.data.size() < 2 * raw.channels * raw.oversampling)
+        return;
     activeChannels = raw.channels;
     const unsigned rawSampleCount = unsigned( raw.data.size() ) / activeChannels;
     if ( !rawSampleCount )
@@ -841,6 +802,8 @@ void HantekDsoControl::convertRawDataToSamples() {
     QWriteLocker resultLocker( &result.lock );
     result.freeRunning = freeRunning;
     result.tag = raw.tag;
+    result.armGeneration = raw.armGeneration;
+    result.capturedAtMs = raw.capturedAtMs;
     result.samplerate = raw.samplerate / raw.oversampling;
     // Prepare result buffers
     result.data.resize( specification->channels + 1 ); // CH0, CH1, MATH
@@ -901,7 +864,7 @@ void HantekDsoControl::convertRawDataToSamples() {
                 sample += double( rawSample ) - offsetCalibration;
             }
             sample /= rawOversampling;
-            if ( scope->liveCalibrationActive ) {
+            if ( calibrationActive ) {
                 liveOffset += sample;
             }
             // qDebug() << channel << offsetCorrection[ gainIndex ][ channel ];
@@ -912,11 +875,13 @@ void HantekDsoControl::convertRawDataToSamples() {
         }
         liveOffset /= resultSamples;
 
-        if ( scope->liveCalibrationActive ) {
-            if ( maxValue - minValue > 10 || liveOffset > 20 ) { // big jitter/noise, offset too big
+        if ( calibrationActive ) {
+            if ( !validCalibrationOffset(minValue, maxValue, liveOffset) ) {
+                calibrationActive = false;
                 emit liveCalibrationError();                     // stop live calibration without storing something
             } else {
                 offsetCorrection[ gainIndex ][ channel ] = liveOffset;
+                calibrationHasChanged = true;
                 if ( result.samplerate < 30e6 ) {
                     controlsettings.correctionValues->off.ls.step[ gainIndex ][ channel ] =
                         offsetToRaw( liveOffset + offsetCalibration );
@@ -960,21 +925,29 @@ void HantekDsoControl::updateInterval() {
 void HantekDsoControl::stateMachine() {
 
     bool triggered = false;
+    bool freshSingleTrigger = false;
     if ( verboseLevel > 4 )
         qDebug() << "    HDC::stateMachine()" << raw.tag;
 
     // we have a sample available ...
     // ... that is either a new sample or we are in free run mode or a new trigger search is needed
-    static unsigned lastTag = UINT32_MAX; // detect new raw data
-    if ( samplingStarted && raw.valid && ( raw.tag != lastTag || raw.freeRun || refreshNeeded() ) ) {
-        lastTag = raw.tag;
+    bool available;
+    {
+        QReadLocker locker(&raw.lock);
+        available = raw.valid && (raw.tag != lastTag || raw.freeRun || refreshNeeded());
+    }
+    if ( samplingStarted && available ) {
         convertRawDataToSamples(); // process samples, apply gain settings etc.
+        lastTag = result.tag;
         mathChannel->calculate( result );
         QWriteLocker resultLocker( &result.lock );
         if ( !result.freeRunning ) { // trigger mode != NONE
             // trigger functions below are in separate file "triggering.cpp"
             triggering->searchTriggeredPosition( result );          // detect trigger point
             triggered = triggering->provideTriggeredData( result ); // present either free running or last triggered trace
+            freshSingleTrigger = controlsettings.trigger.mode == Dso::TriggerMode::SINGLE &&
+                                 singleCapture.accepts(result.armGeneration) &&
+                                 triggering->getTriggeredPositionRaw() != 0;
         } else {                                                    // free running display
             triggered = false;
             result.triggeredPosition = 0;
@@ -993,34 +966,28 @@ void HantekDsoControl::stateMachine() {
     // always run the display (slowly at t=displayInterval) to allow user interaction
     // ... but update immediately if new triggered data is available after untriggered
     // skip an even number of frames when slope == Dso::Slope::Both
-    if ( ( triggered && !lastTriggered )                                 // show new data immediately
+    if ( freshSingleTrigger || ( triggered && !lastTriggered )            // never lose the last SINGLE frame
          || ( ( delayDisplay >= displayInterval )                        // or wait some time ...
               && ( ( controlsettings.trigger.slope != Dso::Slope::Both ) // ... for ↗ or ↘ slope
                    || skipEven ) ) ) {                                   // and drop even no. of frames
         skipEven = true;                                                 // zero frames -> even
         delayDisplay = 0;
         timestampDebug( QString( "samplesAvailable %1" ).arg( result.tag ) );
-        emit samplesAvailable( &result ); // via signal/slot -> PostProcessing::input()
+        emit samplesAvailable( result.snapshot() );
     } else {
         skipEven = !skipEven;
     }
     lastTriggered = triggered; // save state
 
-    static bool skipFirstSingle = true; // skip 1st triggered single trace to avoid old data
     // Stop sampling if we're in single trigger mode and have a triggered trace (txh No13)
-    if ( isSamplingUI() && controlsettings.trigger.mode == Dso::TriggerMode::SINGLE && triggering->getTriggeredPositionRaw() ) {
+    if ( isSamplingUI() && controlsettings.trigger.mode == Dso::TriggerMode::SINGLE && freshSingleTrigger ) {
         if ( verboseLevel > 5 )
             qDebug() << "     HDC::stateMachine() stop sampling" << raw.tag;
-        if ( skipFirstSingle ) { // skip the 1st measurement in single mode
-            skipFirstSingle = false;
-        } else {
-            enableSamplingUI( false ); // update UI sample indicator run/stop
-            samplingStarted = false;
-        }
+        enableSamplingUI( false );
+        samplingStarted = false;
     }
 
     if ( isSamplingUI() ) { // triggered by action "start sampling" and call to enableSampling()
-        lastTag = raw.tag;
         // Sampling hasn't started, update the expected sample count
         expectedSampleCount = getSampleCount();
         timestampDebug( "Starting to capture" );

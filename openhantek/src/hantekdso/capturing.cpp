@@ -5,6 +5,7 @@
 #include "capturing.h"
 #include "usb/scopedevice.h"
 #include <QDebug>
+#include <QDateTime>
 #include <cmath>
 
 
@@ -62,6 +63,8 @@ void CapturingThread::xferSamples() {
     hdc->raw.freeRun = freeRun;
     hdc->raw.valid = valid;
     hdc->raw.tag = tag;
+    hdc->raw.armGeneration = armGeneration;
+    hdc->raw.capturedAtMs = QDateTime::currentMSecsSinceEpoch();
 }
 
 
@@ -155,6 +158,7 @@ void CapturingThread::capture() {
         xferSamples();
     if ( 0 == ++tag )
         ++tag; // skip tag==0
+    armGeneration = hdc->singleCapture.current();
     if ( device->isRealHW() ) {
         received = getRealSamples( device );
     } else {

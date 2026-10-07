@@ -60,7 +60,8 @@ class PPresult {
     int triggeredPosition = 0; ///< Not triggered
     double pulseWidth1 = 0.0;  ///< The width of the triggered pulse
     double pulseWidth2 = 0.0;  ///< The width of the following pulse
-    unsigned tag;              ///< track individual sample blocks (debug support)
+    unsigned tag = 0;          ///< track individual sample blocks (debug support)
+    qint64 capturedAtMs = 0;    ///< acquisition completion time (wall clock, not sample-clock synchronization)
 
     ChannelsGraphs vaChannelSpectrum;
     ChannelsGraphs vaChannelVoltage;

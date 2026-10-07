@@ -166,7 +166,7 @@ class ScopeDevice : public QObject {
     DSOModel *model;
 
     // Libusb specific variables
-    struct libusb_device_descriptor descriptor;
+    struct libusb_device_descriptor descriptor {};
     libusb_device *device; ///< The USB handle for the oscilloscope
     libusb_device_handle *handle = nullptr;
     unsigned findIteration;

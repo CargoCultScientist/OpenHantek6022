@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <cmath>
+#include <mutex>
+#include <algorithm>
+#include <limits>
 
 #include <QColor>
 #include <QDebug>
@@ -16,6 +19,28 @@
 #include "utils/printutils.h"
 #include "viewconstants.h"
 
+namespace {
+std::mutex fftPlannerMutex;
+
+double harmonicDistortion(const std::vector<double> &power, double fundamental, int width) {
+    if (!std::isfinite(fundamental) || fundamental <= 2 * width + 1 ||
+        2 * fundamental + width >= double(power.size())) return -1;
+    auto band = [&](double center) {
+        double sum = 0;
+        const int bin = int(std::lround(center));
+        for (int k = bin - width; k <= bin + width; ++k)
+            if (k > 0 && k < int(power.size())) sum += power[size_t(k)];
+        return sum;
+    };
+    const double p1 = band(fundamental);
+    if (!(p1 > 0)) return -1;
+    double harmonics = 0;
+    for (int harmonic = 2; harmonic <= 10 && harmonic * fundamental + width < double(power.size()); ++harmonic)
+        harmonics += band(harmonic * fundamental);
+    return std::sqrt(harmonics / p1);
+}
+}
+
 
 /// \brief Analyzes the data from the dso.
 SpectrumGenerator::SpectrumGenerator( const DsoSettingsScope *scope, const DsoSettingsAnalysis *analysis )
@@ -28,7 +53,8 @@ SpectrumGenerator::SpectrumGenerator( const DsoSettingsScope *scope, const DsoSe
 SpectrumGenerator::~SpectrumGenerator() {
     if ( scope->verboseLevel > 1 )
         qDebug() << " SpectrumGenerator::~SpectrumGenerator()";
-    if ( analysis->reuseFftPlan ) {
+    {
+        std::lock_guard<std::mutex> guard(fftPlannerMutex);
         if ( fftPlan_R2HC ) {
             fftw_destroy_plan( fftPlan_R2HC );
             fftPlan_R2HC = nullptr;
@@ -71,7 +97,7 @@ void SpectrumGenerator::process( PPresult *result ) {
     for ( ChannelID channel = 0; channel < result->channelCount(); ++channel ) {
         DataChannel *const channelData = result->modifiableData( channel );
 
-        if ( channelData->voltage.samples.empty() ) {
+        if ( channelData->voltage.samples.size() < 2 || !(channelData->voltage.interval > 0) ) {
             // Clear unused channels
             channelData->spectrum.interval = 0;
             channelData->spectrum.samples.clear();
@@ -185,6 +211,10 @@ void SpectrumGenerator::process( PPresult *result ) {
                     area += w = 1.0;
             }
             // weight is the area below the window function
+            if (!(area > 1e-12)) { // Degenerate two-sample windows still need finite results.
+                std::fill(window.begin(), window.end(), 1.0);
+                area = sampleCount;
+            }
             double windowScale = sampleCount / area; // normalise all windows equal to the rectangular window
 
             // DFT transforms a 1V sin(ωt) signal to 1 = 0 dB, RMS = 0.707 V = sqrt(0.5) V (-3dBV)
@@ -265,16 +295,20 @@ void SpectrumGenerator::process( PPresult *result ) {
         fftHcSpectrum = fftw_alloc_real( size_t( std::max( SAMPLESIZE, sampleCount ) ) );
         if ( nullptr == fftHcSpectrum ) // error
             break;
-        if ( analysis->reuseFftPlan ) {    // build one optimized plan and reuse it for all transformations
-            if ( nullptr == fftPlan_R2HC ) // not yet created, do it now (this takes some time)
-                fftPlan_R2HC = fftw_plan_r2r_1d( sampleCount, fftWindowedValues, fftHcSpectrum, FFTW_R2HC, FFTW_MEASURE );
-            fftw_execute_r2r( fftPlan_R2HC, fftWindowedValues, fftHcSpectrum ); // but it will run faster
-        } else { // build a more generic plan, this takes much less time than the optimized plan
-            fftPlan_R2HC = fftw_plan_r2r_1d( sampleCount, fftWindowedValues, fftHcSpectrum, FFTW_R2HC, FFTW_ESTIMATE );
-            fftw_execute( fftPlan_R2HC );      // use it once
-            fftw_destroy_plan( fftPlan_R2HC ); // and destroy it
-            fftPlan_R2HC = nullptr;            // no plan available;
+        {
+            std::lock_guard<std::mutex> guard(fftPlannerMutex);
+            if (fftPlan_R2HC && (forwardPlanSize != sampleCount || !analysis->reuseFftPlan)) {
+                fftw_destroy_plan(fftPlan_R2HC);
+                fftPlan_R2HC = nullptr;
+            }
+            if (!fftPlan_R2HC) {
+                // ESTIMATE never destroys the first acquisition while planning.
+                fftPlan_R2HC = fftw_plan_r2r_1d(sampleCount, fftWindowedValues, fftHcSpectrum, FFTW_R2HC, FFTW_ESTIMATE);
+                forwardPlanSize = sampleCount;
+            }
         }
+        if (!fftPlan_R2HC) break;
+        fftw_execute_r2r(fftPlan_R2HC, fftWindowedValues, fftHcSpectrum);
         // Do an autocorrelation to get the frequency of the signal
         // fft: f(t) o-- F(ω); calculate power spectrum |F(ω)|²
         // ifft: F(ω) ∙ F(ω) --o f(t) ⊗ f(t) (convolution of f(t) with f(t), i.e. autocorrelation)
@@ -287,7 +321,8 @@ void SpectrumGenerator::process( PPresult *result ) {
 
         // create powerSpectrum in spectrum.samples (display) and a copy of it in powerSpectrum (for iDFT)
         // because hc2r iDFT destroys spectrum input
-        const double norm = 1.0 / dftLength / dftLength;
+        const double halfLength = sampleCount / 2.0;
+        const double norm = 1.0 / halfLength / halfLength;
         fftPowerSpectrum = fftWindowedValues; // "rename" the fftw array, will be reused as input for the iDFT
         fftWindowedValues = nullptr;          // invalidate the old pointer
 
@@ -308,7 +343,7 @@ void SpectrumGenerator::process( PPresult *result ) {
             ++fwd;
             --rev;
         }
-        *spectrumIterator = *fwd * *fwd;
+        *spectrumIterator = *fwd * *fwd + (sampleCount % 2 ? *rev * *rev : 0.0);
         *powerIterator++ = *spectrumIterator++ * norm;
 
         // skip mirrored 2nd half (-1) of result spectrum
@@ -324,17 +359,19 @@ void SpectrumGenerator::process( PPresult *result ) {
         fftHcSpectrum = nullptr;
 
         // Do half-complex to real inverse transformation -> autocorrelation
-        if ( analysis->reuseFftPlan ) { // same as above for time -> spectrum
-            if ( nullptr == fftPlan_HC2R )
-                fftPlan_HC2R = fftw_plan_r2r_1d( sampleCount, fftPowerSpectrum, fftAutoCorrelation, FFTW_HC2R, FFTW_MEASURE );
-            fftw_execute_r2r( fftPlan_HC2R, fftPowerSpectrum, fftAutoCorrelation );
-        } else {
-            fftw_plan fftPlan_HC2R =
-                fftw_plan_r2r_1d( sampleCount, fftPowerSpectrum, fftAutoCorrelation, FFTW_HC2R, FFTW_ESTIMATE );
-            fftw_execute( fftPlan_HC2R );
-            fftw_destroy_plan( fftPlan_HC2R );
-            fftPlan_HC2R = nullptr;
+        {
+            std::lock_guard<std::mutex> guard(fftPlannerMutex);
+            if (fftPlan_HC2R && (inversePlanSize != sampleCount || !analysis->reuseFftPlan)) {
+                fftw_destroy_plan(fftPlan_HC2R);
+                fftPlan_HC2R = nullptr;
+            }
+            if (!fftPlan_HC2R) {
+                fftPlan_HC2R = fftw_plan_r2r_1d(sampleCount, fftPowerSpectrum, fftAutoCorrelation, FFTW_HC2R, FFTW_ESTIMATE);
+                inversePlanSize = sampleCount;
+            }
         }
+        if (!fftPlan_HC2R) break;
+        fftw_execute_r2r(fftPlan_HC2R, fftPowerSpectrum, fftAutoCorrelation);
         // content was destroyed during iFFT, free the memory
         fftw_free( fftPowerSpectrum );
         fftPowerSpectrum = nullptr;
@@ -363,9 +400,10 @@ void SpectrumGenerator::process( PPresult *result ) {
 
         // Finally calculate the real spectrum (it's also used for frequency calculation)
         // Convert values into dB (Relative to the reference level 0 dBV = 1V eff)
-        double offset = -scope->analysis.spectrumReference - 20 * log10( dftLength );
+        double offset = -scope->analysis.spectrumReference - 20 * log10( halfLength );
         double offsetLimit = analysis->spectrumLimit; // - scope->analysis.spectrumReference;
-        double peakSpectrum = offsetLimit;            // get a start value for peak search
+        double peakSpectrum = -std::numeric_limits<double>::infinity();
+        const auto linearPower = channelData->spectrum.samples;
         int peakFreqPos = 0;                          // initial position of max spectrum peak
         position = 0;
         min = INT_MAX;
@@ -373,15 +411,15 @@ void SpectrumGenerator::process( PPresult *result ) {
         for ( auto &oneSample : channelData->spectrum.samples ) {
             // spectrum is power spectrum, but show amplitude spectrum -> 10 * log...
             double value = 10 * log10( oneSample ) + offset;
+            if (position > 0 && value > peakSpectrum) {
+                peakSpectrum = value;
+                peakFreqPos = position;
+            }
             // Check if this value has to be limited
             if ( value < offsetLimit )
                 value = offsetLimit;
             oneSample = value;
             // detect frequency peak
-            if ( value > peakSpectrum ) {
-                peakSpectrum = value;
-                peakFreqPos = position;
-            }
             if ( value < min )
                 min = value;
             if ( value > max )
@@ -392,7 +430,14 @@ void SpectrumGenerator::process( PPresult *result ) {
         channelData->dBmax = max;
 
         // Calculate both peak frequencies (correlation and spectrum) in Hz
-        double pF = channelData->spectrum.interval * peakFreqPos;
+        double peakBin = peakFreqPos;
+        if (peakFreqPos > 0 && peakFreqPos + 1 < int(linearPower.size())) {
+            const double a = std::log(std::max(linearPower[size_t(peakFreqPos - 1)], 1e-300));
+            const double b = std::log(std::max(linearPower[size_t(peakFreqPos)], 1e-300));
+            const double c = std::log(std::max(linearPower[size_t(peakFreqPos + 1)], 1e-300));
+            if (a - 2*b + c < -1e-12) peakBin += std::clamp(0.5*(a-c)/(a-2*b+c), -0.5, 0.5);
+        }
+        double pF = channelData->spectrum.interval * peakBin;
         double pC = 1.0 / ( channelData->voltage.interval * peakCorrPos );
         if ( scope->verboseLevel > 5 )
             qDebug() << "     SpectrumGenerator::process()" << channel << "freq:" << peakFreqPos << pF << "corr:" << peakCorrPos
@@ -412,20 +457,10 @@ void SpectrumGenerator::process( PPresult *result ) {
         // according IEEE method: THD = sqrt( power_of_harmonics / power_of_fundamental )
         if ( scope->analysis.calculateTHD ) { // set in menu Oscilloscope/Settings/Analysis
             channelData->thd = -1;            // invalid unless calculation is ok
-            double f1 = channelData->frequency / channelData->spectrum.interval;
-            if ( f1 >= 1 ) { // position of fundamental frequency is usable
-                // get power of fundamental frequency
-                double p1 = pow( 10, channelData->spectrum.samples[ unsigned( round( f1 ) ) ] / 10 );
-                if ( p1 > 0 ) {
-                    double pn = 0.0;                                     // sum of power of harmonics
-                    for ( double fn = 2 * f1; fn < dftLength; fn += f1 ) // iterate over all harmonics
-                        pn += pow( 10, channelData->spectrum.samples[ unsigned( round( fn ) ) ] / 10 );
-                    channelData->thd = sqrt( pn / p1 );
-                    if ( scope->verboseLevel > 5 )
-                        qDebug() << "     SpectrumGenerator::process() THD" << channel << p1 << pn << channelData->thd;
-                    // printf( "%g %g %g %% THD\n", p1, pn, channelData->thd );
-                }
-            }
+            const int width = analysis->spectrumWindow == Dso::WindowFunction::FLATTOP ? 5 :
+                              analysis->spectrumWindow >= Dso::WindowFunction::BLACKMAN ? 4 : 2;
+            if (channelData->valid)
+                channelData->thd = harmonicDistortion(linearPower, peakBin, width);
         }
     }
     // free the memory used for fft unless already done ("fftw_free( nullptr )" is a no-op)

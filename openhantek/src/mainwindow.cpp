@@ -133,10 +133,10 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     // Window title
     setWindowIcon( QIcon( ":/images/OpenHantek.svg" ) );
     setWindowTitle( dsoControl->getDevice()->isRealHW()
-                        ? tr( "OpenHantek6022 (%1) - Device %2 (FW%3)" )
+                        ? tr( "OpenHantek Lab (%1) - Device %2 (FW%3)" )
                               .arg( QString::fromStdString( VERSION ), dsoControl->getModel()->name )
                               .arg( dsoControl->getDevice()->getFwVersion(), 4, 16, QChar( '0' ) )
-                        : tr( "OpenHantek6022 (%1) - " ).arg( QString::fromStdString( VERSION ) ) + tr( "Demo Mode" ) );
+                        : tr( "OpenHantek Lab (%1) - " ).arg( QString::fromStdString( VERSION ) ) + tr( "Demo Mode" ) );
 
 #if ( QT_VERSION >= QT_VERSION_CHECK( 5, 6, 0 ) )
     setDockOptions( dockOptions() | QMainWindow::GroupedDragging );
@@ -247,8 +247,8 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
             if ( verboseLevel > 2 )
                 qDebug() << "  Calibrate offset" << active;
             ui->actionCalibrateOffset->setChecked( active );
-            dsoControl->calibrateOffset( active );
             scope->liveCalibrationActive = active;
+            QMetaObject::invokeMethod( dsoControl, [dsoControl, active]() { dsoControl->calibrateOffset( active ); }, Qt::QueuedConnection );
         } );
 
         // disable calibration e.g. if zero signal too noisy or offset too big
@@ -411,7 +411,10 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
         QString configFileName = QFileDialog::getOpenFileName( this, tr( "Open file" ), "", tr( "Settings (*.conf)" ), nullptr,
                                                                QFileDialog::DontUseNativeDialog );
         if ( !configFileName.isEmpty() ) {
-            dsoSettings->loadFromFile( configFileName );
+            if ( !dsoSettings->loadFromFile( configFileName ) ) {
+                QMessageBox::warning( this, tr("Load settings"), tr("Unsupported settings version or unreadable file. The file and current settings were not changed.") );
+                return;
+            }
             restoreGeometry( dsoSettings->mainWindowGeometry );
             restoreState( dsoSettings->mainWindowState );
 
@@ -441,7 +444,8 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
             configFileName.append( ".conf" );
         dsoSettings->mainWindowGeometry = saveGeometry();
         dsoSettings->mainWindowState = saveState();
-        dsoSettings->saveToFile( configFileName );
+        if ( !dsoSettings->saveToFile( configFileName ) )
+            QMessageBox::warning( this, tr("Save settings"), tr("Could not write the settings file.") );
     } );
 
     connect( ui->actionExit, &QAction::triggered, this, &QWidget::close );

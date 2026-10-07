@@ -7,6 +7,8 @@
 #include <QReadWriteLock>
 #include <QWriteLocker>
 #include <vector>
+#include <memory>
+#include <cstdint>
 
 struct DSOsamples {
     std::vector< std::vector< double > > data; ///< Pointer to input data from device
@@ -19,7 +21,27 @@ struct DSOsamples {
     Unit mathVoltageUnit = UNIT_VOLTS;         ///< unless UNIT_VOLTSQUARE for some math functions
     bool freeRunning = false;                  ///< trigger: NONE, half sample count
     unsigned tag = 0;                          ///< track individual sample blocks (debug support)
+    std::uint64_t armGeneration = 0;
+    qint64 capturedAtMs = 0;
     mutable QReadWriteLock lock;
+
+    std::shared_ptr<const DSOsamples> snapshot() const {
+        QReadLocker locker(&lock);
+        auto copy = std::make_shared<DSOsamples>();
+        copy->data = data;
+        copy->samplerate = samplerate;
+        copy->clipped = clipped;
+        copy->liveTrigger = liveTrigger;
+        copy->triggeredPosition = triggeredPosition;
+        copy->pulseWidth1 = pulseWidth1;
+        copy->pulseWidth2 = pulseWidth2;
+        copy->mathVoltageUnit = mathVoltageUnit;
+        copy->freeRunning = freeRunning;
+        copy->tag = tag;
+        copy->armGeneration = armGeneration;
+        copy->capturedAtMs = capturedAtMs;
+        return copy;
+    }
 };
 
 const int SAMPLESIZE = 20000;

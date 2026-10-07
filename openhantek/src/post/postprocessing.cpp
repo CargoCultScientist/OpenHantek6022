@@ -41,15 +41,17 @@ void PostProcessing::convertData( const DSOsamples *source, PPresult *destinatio
     }
     destination->modifiableData( 2 )->voltageUnit = source->mathVoltageUnit; // MATH channel unit
     destination->tag = source->tag;
+    destination->capturedAtMs = source->capturedAtMs;
 }
 
 
-void PostProcessing::input( const DSOsamples *data ) {
+void PostProcessing::input( std::shared_ptr<const DSOsamples> data ) {
     if ( data && processing ) {
         if ( verboseLevel > 4 )
             qDebug() << "    PostProcessing::input()" << data->tag;
         currentData.reset( new PPresult( channelCount ) ); // start with a fresh data structure
-        convertData( data, currentData.get() );            // copy all relevant data over
+        convertData( data.get(), currentData.get() );      // copy from this acquisition's owned snapshot
+        emit rawSamplesReady(std::make_shared<PPresult>(*currentData));
         for ( Processor *p : processors )                  // feed it into the PP chain
             p->process( currentData.get() );
         std::shared_ptr< PPresult > res = std::move( currentData );

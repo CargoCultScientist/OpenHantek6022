@@ -22,4 +22,5 @@ class Triggering {
         return ( slope == Dso::Slope::Positive ? Dso::Slope::Negative : Dso::Slope::Positive );
     }
     int triggeredPositionRaw = 0; // not triggered
+    DSOsamples triggeredResult; // per-device history, including acquisition identity
 };

@@ -31,6 +31,7 @@ class ExporterRegistry : public QObject {
     // thread context. Do not open GUI dialogs or interrupt the control flow.
     void addRawSamples( PPresult *data );
     void input( std::shared_ptr< PPresult > data );
+    void inputRaw( std::shared_ptr< PPresult > data );
 
     void registerExporter( ExporterInterface *exporter );
     void setExporterEnabled( ExporterInterface *exporter, bool enabled );
@@ -52,6 +53,7 @@ class ExporterRegistry : public QObject {
     std::list< ExporterInterface * > enabledExporters;
     /// List of exporters that wait to be called back by the user to save their work
     std::set< ExporterInterface * > waitToSaveExporters;
+    std::set< ExporterInterface * > savingExporters;
 
     /// Process data from addRawSamples() or input() in the given exporter. Add the
     /// exporter to waitToSaveExporters if it finishes.

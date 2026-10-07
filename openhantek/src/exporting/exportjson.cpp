@@ -12,6 +12,11 @@
 #include <QLocale>
 #include <QMessageBox>
 #include <QTextStream>
+#include <QSaveFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <algorithm>
 
 ExporterJSON::ExporterJSON() {}
 
@@ -31,87 +36,70 @@ bool ExporterJSON::samples( const std::shared_ptr< PPresult > newData ) {
     return false;
 }
 
-QFile *ExporterJSON::getFile() {
+QString ExporterJSON::getFile() {
     QFileDialog fileDialog( nullptr, tr( "Save JSON" ), QString(), tr( "Java Script Object Notation (*.json)" ) );
     fileDialog.setFileMode( QFileDialog::AnyFile );
     fileDialog.setAcceptMode( QFileDialog::AcceptSave );
+    fileDialog.setDefaultSuffix("json");
     fileDialog.setOption( QFileDialog::DontUseNativeDialog );
     if ( fileDialog.exec() != QDialog::Accepted )
-        return nullptr;
-
-    QFile *jsonFile = new QFile( fileDialog.selectedFiles().first() );
-    if ( !jsonFile->open( QIODevice::WriteOnly | QIODevice::Text ) ) {
-        QMessageBox::critical( nullptr, QCoreApplication::applicationName(), tr( "Write error\n%1" ).arg( jsonFile->fileName() ) );
-        return nullptr;
-    }
-    return jsonFile;
+        return {};
+    return fileDialog.selectedFiles().first();
 }
 
 void ExporterJSON::fillData( QTextStream &jsonStream, const ExporterData &dto ) {
     std::vector< const SampleValues * > voltageData = dto.getVoltageData();
     std::vector< const SampleValues * > spectrumData = dto.getSpectrumData();
 
-    jsonStream << "[\n";
-    const char *indent = "  ";
-
+    QJsonArray rows;
     for ( unsigned int row = 0; row < dto.getMaxRow(); ++row ) {
-        jsonStream << indent << "{\n";
-
-        QString objInString; // to easily remove latest comma in json object
-        QTextStream objInStream( &objInString );
-        objInStream.setRealNumberNotation( QTextStream::FixedNotation );
-        objInStream.setRealNumberPrecision( 10 );
-
-        objInStream << indent << indent << "\"time\": " << dto.getTimeInterval() * row << ",\n";
-
+        QJsonObject object;
+        const bool hasTime = std::any_of(voltageData.begin(), voltageData.end(), [row](const SampleValues *v) {
+            return v && row < v->samples.size();
+        });
+        object["time"] = hasTime ? QJsonValue(dto.getTimeInterval() * row) : QJsonValue();
         for ( ChannelID channel = 0; channel < dto.getChannelsCount(); ++channel )
             if ( voltageData[ channel ] != nullptr ) {
-                objInStream << indent << indent << '\"' << registry->settings->scope.voltage[ channel ].name << "\": ";
-                if ( row < voltageData[ channel ]->samples.size() )
-                    objInStream << voltageData[ channel ]->samples[ row ];
-                else
-                    objInStream << "\": null";
-                objInStream << ",\n";
+                object[registry->settings->scope.voltage[channel].name] = row < voltageData[channel]->samples.size()
+                    ? QJsonValue(voltageData[channel]->samples[row]) : QJsonValue();
             }
-
         if ( dto.isSpectrumUsed() ) {
-            objInStream << indent << indent << "\"freq\": " << dto.getFreqInterval() * row << ",\n";
+            const bool hasFrequency = std::any_of(spectrumData.begin(), spectrumData.end(), [row](const SampleValues *v) {
+                return v && row < v->samples.size();
+            });
+            object["freq"] = hasFrequency ? QJsonValue(dto.getFreqInterval() * row) : QJsonValue();
             for ( ChannelID channel = 0; channel < dto.getChannelsCount(); ++channel ) {
                 if ( spectrumData[ channel ] != nullptr ) {
-                    objInStream << indent << indent << '\"' << registry->settings->scope.spectrum[ channel ].name << "\": ";
-                    if ( row < spectrumData[ channel ]->samples.size() )
-                        objInStream << spectrumData[ channel ]->samples[ row ];
-                    else
-                        objInStream << "null";
-                    objInStream << ",\n";
+                    object[registry->settings->scope.spectrum[channel].name] = row < spectrumData[channel]->samples.size()
+                        ? QJsonValue(spectrumData[channel]->samples[row]) : QJsonValue();
                 }
             }
         }
-
-        jsonStream << objInString.mid( 0, objInString.length() - 2 ) << '\n' << indent << '}';
-        if ( row != dto.getMaxRow() - 1 )
-            jsonStream << ',';
-        jsonStream << '\n';
+        rows.append(object);
     }
-    jsonStream << "]\n";
+    jsonStream << QString::fromUtf8(QJsonDocument(rows).toJson());
 }
 
 bool ExporterJSON::save() {
-    QFile *jsonFile = getFile();
-    if ( jsonFile == nullptr )
-        return false;
+    const QString name = getFile();
+    if (name.isEmpty()) return false;
+    QSaveFile file(name);
+    const bool saved = file.open(QIODevice::WriteOnly | QIODevice::Text) && write(file) && file.commit();
+    if (!saved) QMessageBox::warning(nullptr, tr("JSON export"), tr("Could not save %1: %2").arg(name, file.errorString()));
+    return saved;
+}
 
-    QTextStream jsonStream( jsonFile );
+bool ExporterJSON::write(QIODevice &device) {
+    if (!data || !device.isWritable()) return false;
+    QTextStream jsonStream( &device );
     jsonStream.setRealNumberNotation( QTextStream::FixedNotation );
     jsonStream.setRealNumberPrecision( 10 );
 
     ExporterData dto = ExporterData( data, registry->settings->scope );
     fillData( jsonStream, dto );
 
-    jsonFile->close();
-    delete jsonFile;
-
-    return true;
+    jsonStream.flush();
+    return jsonStream.status() == QTextStream::Ok;
 }
 
 

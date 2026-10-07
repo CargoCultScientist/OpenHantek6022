@@ -20,9 +20,10 @@ class ExporterJSON : public ExporterInterface {
     bool samples( const std::shared_ptr< PPresult > newData ) override;
     bool save() override;
     float progress() override;
+    bool write(QIODevice &device);
 
   private:
-    QFile *getFile();
+    QString getFile();
     void fillData( QTextStream &jsonStream, const ExporterData &dto );
     std::shared_ptr< PPresult > data;
 };

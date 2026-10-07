@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <QApplication>
+#include <QMessageBox>
 #include <QCommandLineParser>
 #include <QDebug>
 #include <QElapsedTimer>
@@ -81,9 +82,9 @@ int main( int argc, char *argv[] ) {
     startupTime.start(); // time tracking for verbose startup
 
     //////// Set application information ////////
-    QCoreApplication::setOrganizationName( "OpenHantek" );
-    QCoreApplication::setOrganizationDomain( "openhantek.org" );
-    QCoreApplication::setApplicationName( "OpenHantek6022" );
+    QCoreApplication::setOrganizationName( "OpenHantekLab" );
+    QCoreApplication::setOrganizationDomain( "cargocultscientist.github.io" );
+    QCoreApplication::setApplicationName( "OpenHantekLab" );
     QCoreApplication::setApplicationVersion( VERSION );
 
     bool demoMode = false;
@@ -412,8 +413,8 @@ int main( int argc, char *argv[] ) {
                  << "create settings object";
     DsoSettings settings( scopeDevice.get(), verboseLevel, resetSettings );
 
-    if ( !configFileName.isEmpty() )
-        settings.loadFromFile( configFileName );
+    if ( !configFileName.isEmpty() && !settings.loadFromFile( configFileName ) )
+        QMessageBox::warning( nullptr, "OpenHantek Lab", "Cannot load these settings: unsupported version or unreadable file. The file was not modified." );
 
     //////// Create exporters ////////
     if ( verboseLevel )
@@ -422,7 +423,6 @@ int main( int argc, char *argv[] ) {
     ExporterRegistry exportRegistry( spec, &settings );
     ExporterCSV exporterCSV;
     ExporterJSON exporterJSON;
-    ExporterProcessor samplesToExportRaw( &exportRegistry );
     exportRegistry.registerExporter( &exporterCSV );
     exportRegistry.registerExporter( &exporterJSON );
 
@@ -439,15 +439,16 @@ int main( int argc, char *argv[] ) {
     // MathChannelGenerator mathchannelGenerator( &settings.scope, spec->channels );
     GraphGenerator graphGenerator( &settings.scope, &settings.view );
 
-    postProcessing.registerProcessor( &samplesToExportRaw );
     // postProcessing.registerProcessor( &mathchannelGenerator );
     postProcessing.registerProcessor( &spectrumGenerator );
     postProcessing.registerProcessor( &graphGenerator );
 
     postProcessing.moveToThread( &postProcessingThread );
     QObject::connect( &dsoControl, &HantekDsoControl::samplesAvailable, &postProcessing, &PostProcessing::input );
+    QObject::connect(&postProcessing, &PostProcessing::rawSamplesReady, &exportRegistry,
+                     &ExporterRegistry::inputRaw, Qt::QueuedConnection);
     QObject::connect( &postProcessing, &PostProcessing::processingFinished, &exportRegistry, &ExporterRegistry::input,
-                      Qt::DirectConnection );
+                      Qt::QueuedConnection );
 
     if ( verboseLevel )
         qDebug() << startupTime.elapsed() << "ms:"

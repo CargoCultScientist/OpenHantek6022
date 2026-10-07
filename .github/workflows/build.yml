@@ -22,7 +22,8 @@ name: Build
 # deploy Ubuntu / macOS / Windows binaries
 # https://docs.github.com/en/actions/reference/runners/github-hosted-runners
 
-on: [push]
+on:
+  workflow_dispatch: # Original packaging retained for reference; Lab has its own regression workflow.
 
 
 env:
@@ -479,4 +480,3 @@ jobs:
 #         files: ./build/packages/*
 #       env:
 #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-

@@ -37,7 +37,7 @@ DsoSettings::DsoSettings( const ScopeDevice *scopeDevice, int verboseLevel, bool
         view.screen.spectrum.push_back( QColor::fromHsv( spectrum_hue[ index ], 0xff, 0xff ) );
         view.print.voltage.push_back( view.screen.voltage.back().darker() );
         view.print.spectrum.push_back( view.screen.spectrum.back().darker() );
-        if ( ++index >= sizeof voltage_hue )
+        if ( ++index >= sizeof voltage_hue / sizeof voltage_hue[0] )
             index = 0;
     }
 
@@ -78,9 +78,14 @@ bool DsoSettings::saveToFile( const QString &filename ) {
         return false;
     }
     storeSettings.swap( local ); // switch to requested filename
+    const auto oldVersion = configVersion;
+    configVersion = CONFIG_VERSION; // Save As always writes a usable setup, even after "defaults next time".
     save();                      // store the settings
+    configVersion = oldVersion;
+    storeSettings->sync();
+    const bool saved = storeSettings->status() == QSettings::NoError;
     storeSettings.swap( local ); // and switch back to default persistent storage location (file, registry, ...)
-    return true;
+    return saved;
 }
 
 
@@ -90,7 +95,9 @@ bool DsoSettings::loadFromFile( const QString &filename ) {
         qDebug() << " DsoSettings::loadFilename()" << filename;
     if ( QFileInfo( filename ).isReadable() ) {
         std::unique_ptr< QSettings > local = std::unique_ptr< QSettings >( new QSettings( filename, QSettings::IniFormat ) );
-        if ( local->status() == QSettings::NoError ) {
+        // Loading is read-only. Refuse unknown schemas before changing any in-memory settings.
+        if ( local->status() == QSettings::NoError &&
+             local->value( "configuration/version", 0 ).toUInt() == CONFIG_VERSION ) {
             storeSettings.swap( local );
             load();
             storeSettings.swap( local );
@@ -108,11 +115,18 @@ void DsoSettings::load() {
     if ( verboseLevel > 1 )
         qDebug() << " DsoSettings::load()" << storeSettings->fileName();
     // Start with default configuration?
-    if ( resetSettings || storeSettings->value( "configuration/version", 0 ).toUInt() < CONFIG_VERSION ) {
-        // incompatible change or config reset by user
-        storeSettings->clear(); // start with a clean config storage
-        QSettings().clear();    // and a clean global storage
+    if ( resetSettings ) {
+        resetSettings = false; // one-shot, in-memory reset; never clear global preferences
         setDefaultConfig();
+        return;
+    }
+    if ( storeSettings->value( "configuration/version", 0 ).toUInt() != CONFIG_VERSION ) {
+        const bool existing = !storeSettings->allKeys().isEmpty();
+        setDefaultConfig();
+        if ( existing ) {
+            alwaysSave = false; // preserve an unsupported device file on exit as well as on load
+            qWarning() << "Unsupported settings version; automatic saving disabled:" << storeSettings->fileName();
+        }
         return;
     }
 

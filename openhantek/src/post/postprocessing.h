@@ -49,9 +49,9 @@ class PostProcessing : public QObject {
      * this class object into another thread.
      * @param data
      */
-    void input( const DSOsamples *data );
+    void input( std::shared_ptr<const DSOsamples> data );
 
   signals:
+    void rawSamplesReady( std::shared_ptr< PPresult > result );
     void processingFinished( std::shared_ptr< PPresult > result );
 };
-

@@ -19,9 +19,10 @@ class ExporterCSV : public ExporterInterface {
     bool samples( const std::shared_ptr< PPresult > newData ) override;
     bool save() override;
     float progress() override;
+    bool write(QIODevice &device);
 
   private:
-    QFile *getFile();
+    QString getFile();
     void fillHeaders( QTextStream &jsonStream, const ExporterData &dto, const char *sep );
     void fillData( QTextStream &jsonStream, const ExporterData &dto, const char *sep );
     std::shared_ptr< PPresult > data;

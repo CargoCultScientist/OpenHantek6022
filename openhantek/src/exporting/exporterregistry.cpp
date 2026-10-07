@@ -15,7 +15,6 @@ ExporterRegistry::ExporterRegistry( const Dso::ControlSpecification *deviceSpeci
 bool ExporterRegistry::processData( std::shared_ptr< PPresult > &data, ExporterInterface *const &exporter ) {
     if ( !exporter->samples( data ) ) {
         waitToSaveExporters.insert( exporter );
-        emit exporterProgressChanged();
         return true;
     }
     return false;
@@ -24,14 +23,21 @@ bool ExporterRegistry::processData( std::shared_ptr< PPresult > &data, ExporterI
 void ExporterRegistry::addRawSamples( PPresult *d ) {
     if ( settings->exportProcessedSamples )
         return;
-    std::shared_ptr< PPresult > data( d );
+    std::shared_ptr< PPresult > data = std::make_shared<PPresult>(*d);
+    inputRaw(std::move(data));
+}
+
+void ExporterRegistry::inputRaw(std::shared_ptr<PPresult> data) {
+    if (settings->exportProcessedSamples) return;
     enabledExporters.remove_if( [ &data, this ]( ExporterInterface *const &i ) { return processData( data, i ); } );
+    if (!waitToSaveExporters.empty()) emit exporterProgressChanged();
 }
 
 void ExporterRegistry::input( std::shared_ptr< PPresult > data ) {
     if ( !settings->exportProcessedSamples )
         return;
     enabledExporters.remove_if( [ &data, this ]( ExporterInterface *const &i ) { return processData( data, i ); } );
+    if (!waitToSaveExporters.empty()) emit exporterProgressChanged();
 }
 
 void ExporterRegistry::registerExporter( ExporterInterface *exporter ) {
@@ -40,6 +46,7 @@ void ExporterRegistry::registerExporter( ExporterInterface *exporter ) {
 }
 
 void ExporterRegistry::setExporterEnabled( ExporterInterface *exporter, bool enabled ) {
+    if (savingExporters.count(exporter)) return; // A modal save owns its snapshot until it closes.
     bool wasInList = false;
     enabledExporters.remove_if( [ exporter, &wasInList ]( ExporterInterface *inlist ) {
         if ( inlist == exporter ) {
@@ -69,15 +76,19 @@ void ExporterRegistry::setExporterEnabled( ExporterInterface *exporter, bool ena
 }
 
 void ExporterRegistry::checkForWaitingExporters() {
-    for ( ExporterInterface *exporter : waitToSaveExporters ) {
+    // Modal save dialogs run a nested event loop. Detach this batch before entering it.
+    const auto waiting = std::move(waitToSaveExporters);
+    waitToSaveExporters.clear();
+    savingExporters.insert(waiting.begin(), waiting.end());
+    for ( ExporterInterface *exporter : waiting ) {
         if ( exporter->save() ) {
             emit exporterStatusChanged( exporter->name(), tr( "Data saved" ) );
         } else {
             emit exporterStatusChanged( exporter->name(), tr( "No data exported" ) );
         }
         exporter->create( this );
+        savingExporters.erase(exporter);
     }
-    waitToSaveExporters.clear();
 }
 
 std::vector< ExporterInterface * >::const_iterator ExporterRegistry::begin() { return exporters.begin(); }
