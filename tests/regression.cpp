@@ -188,6 +188,11 @@ private slots:
             QVERIFY(!out.data().contains("inf"));
         }
         QLocale::setDefault(QLocale::c());
+        frame->modifiableData(0)->voltageUnit=UNIT_NONE;
+        ExporterCSV dimensionless;dimensionless.create(&registry);dimensionless.samples(frame);
+        QBuffer logic;logic.open(QIODevice::ReadWrite);QVERIFY(dimensionless.write(logic));
+        QVERIFY(logic.data().contains(" / 1\""));
+        frame->modifiableData(0)->voltageUnit=UNIT_VOLTS;
         class FailingDevice : public QIODevice {
             qint64 readData(char*,qint64) override {return -1;}
             qint64 writeData(const char*,qint64) override {return -1;}
