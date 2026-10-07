@@ -13,7 +13,7 @@ Extension: `.ohl.json`. UTF-8 JSON, root object:
 | `channels` | One to three channel objects in acquisition order, including empty/disabled channels |
 | `metadata` | Descriptive device and UI settings; never applied to hardware when loading |
 
-Channel objects contain `name` (up to 256 characters), `unit` (1 = V, 7 = W,
+Channel objects contain `name` (up to 256 characters), `unit` (0 = dimensionless, 1 = V, 7 = W,
 8 = V²), `interval` (positive seconds between samples, or 0 for an empty channel),
 `valid` (false for clipped/invalid channels), and `samples` (finite JSON numbers).
 Time is `i * interval` from record start, or `(i - triggerPosition) * interval`

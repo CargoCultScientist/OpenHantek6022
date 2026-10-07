@@ -278,6 +278,7 @@ private slots:
         Lab::Capture source;
         source.tag=42;source.capturedAtMs=123456789;source.triggerPosition=1;source.triggered=true;
         source.channels.push_back({"CH\"1",UNIT_VOLTS,{{.1,.2,.3},.001},true});
+        source.channels.push_back({"logic",UNIT_NONE,{{0,1,0},.001},true});
         source.metadata={{"note","test"}};
         QString error; const auto path=config.filePath("record.ohl.json");
         QVERIFY2(source.save(path,error),qPrintable(error));
@@ -285,6 +286,8 @@ private slots:
         QCOMPARE(copy->tag,42u); QCOMPARE(copy->capturedAtMs,source.capturedAtMs);
         QCOMPARE(copy->channels[0].signal.samples,source.channels[0].signal.samples);
         QCOMPARE(copy->metadata,source.metadata);
+        QCOMPARE(copy->channels[1].unit,UNIT_NONE);
+        QCOMPARE(copy->channels[1].signal.samples,source.channels[1].signal.samples);
         QFile file(path);QVERIFY(file.open(QIODevice::ReadOnly));const auto original=file.readAll();file.close();
         source.channels[0].signal.samples[0]=Lab::unavailable;
         QVERIFY(!source.save(path,error)); // Failed serialization preserves an existing capture.

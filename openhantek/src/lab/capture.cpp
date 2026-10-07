@@ -101,7 +101,7 @@ std::shared_ptr<const Capture> Capture::load(const QString &filename, QString &e
         CaptureChannel ch;
         ch.name=object["name"].toString();
         const int unit=object["unit"].toInt(-1);
-        if(unit!=UNIT_VOLTS && unit!=UNIT_VOLTSQUARE && unit!=UNIT_WATTS) return fail("Unsupported channel unit");
+        if(unit!=UNIT_NONE && unit!=UNIT_VOLTS && unit!=UNIT_VOLTSQUARE && unit!=UNIT_WATTS) return fail("Unsupported channel unit");
         ch.unit=Unit(unit); ch.valid=object["valid"].toBool(false);
         ch.signal.interval=object["interval"].toDouble(-1);
         if(!object["samples"].isArray()||ch.name.size()>256) return fail("Invalid channel metadata");
