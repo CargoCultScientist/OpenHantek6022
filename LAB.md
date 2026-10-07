@@ -47,16 +47,27 @@ need bench validation. The existing acquisition/display pipeline is not gapless.
 
 The correctness-only release is on the fork's `main` branch. The additions below
 started on `feature/correctness-and-captures`, followed by `feature/measurement-spans`.
-The current development branch is `feature/capture-workbench`, building on both.
+The workbench followed on `feature/capture-workbench`; the current UI pass is on
+`feature/instrument-ui-patterns`, building on all three.
 These additions are not silently bundled into the correctness-only release candidate.
 
 Open **View → Capture history & measurements** (`Ctrl+H`). The scope above remains
 live when selecting a historical record below. **Follow latest** returns the browser
 to the latest acquisition. **Record history** pauses/resumes retention without stopping
-the scope. Clear history also resets the statistics; a pinned reference survives it.
+the scope. **More → Clear history** asks for confirmation and also resets the
+statistics; saved files, a pinned reference and the session log survive it.
+History retention pauses while that confirmation is open and resumes if it was on.
 The dark Capture Lab workbench groups controls into Measure, Reference, Mask test
-and Session log tabs. Waveform and Trend are separate views; Measurements contains
-the detailed table. Compact reading cards remain visible beneath the views. Smaller
+and Session log tabs under **Analysis settings**, collapsed initially. **Focus view**
+hides history and settings without changing recording, logging or the selected view;
+turn it off to restore the previous settings-panel state. The browser badge says
+**FOLLOWING LATEST**, **VIEW FROZEN** or **HISTORY PAUSED**, never hardware Run/Stop.
+RAM-log activity and unexported-data status remain visible even with panels hidden.
+Waveform and Trend are separate views; Measurements contains the detailed table.
+Channel-coloured reading cards retain explicit names, units, span and validity;
+**Details** opens that channel's table row. **Fit record** resets waveform zoom/pan
+without changing acquisition settings. **Clear reference** is in Analysis settings
+→ Reference. Smaller
 windows scroll rather than forcing the main application beyond the screen. Like
 other Qt docks, the workbench can be detached for a larger standalone view.
 
@@ -209,6 +220,53 @@ explicit saving of selected failures, followed by replay fixtures and stronger
 acquisition-settings provenance. Protocol decoding and gapless USB recording remain
 separate projects; they require dependency/licensing checks or hardware validation.
 The installed upstream app, firmware and factory calibration remain untouched.
+
+### UI benchmark and design direction (2026-10-07)
+
+This is a cross-vendor benchmark of documented interaction patterns, not a market
+survey or proof that one interface is more usable. Manufacturer claims such as
+"intuitive" or a short learning curve are not treated as independent evidence.
+The convergence worth adopting is **waveform-first, stable state, contextual
+configuration**. Desktop products carry more weight here than touch-only gestures
+from bench instruments. Product screenshots differ in theme: dark styling alone
+is not the finding, and does not establish readability or accessibility.
+
+| Reference | Observed pattern | OpenHantek application |
+| --- | --- | --- |
+| [Tektronix 4 Series B MSO quick start](https://www.tek.com/en/manual/oscilloscope/4-series-b-mso-quick-start-4-series-mso) | Stacked waveform slices, channel/settings badges, a collapsible results area, context-specific configuration. | Retain separate channel lanes; link trace, card and table identity; put detailed settings behind an explicit control. |
+| [Keysight Infiniium display overview](https://helpfiles.keysight.com/csg/d9300a/Help/Infiniium-UG/Content/Topics/Home/Display_Overview.htm) | A focus mode removes peripheral panels; layouts and waveform operations have dedicated controls. | Add reversible Focus view and a discoverable Fit record button. Do not require a double-click gesture to reset zoom. |
+| [Rohde & Schwarz MXO 4](https://www.rohde-schwarz.com/us/products/test-and-measurement/oscilloscopes/rs-mxo-4-oscilloscope_63493-1164992.html) | SmartGrid offers individual waveform layouts; important tools and settings have direct access. | Preserve the Qt dock and resizable split rather than hard-code a dashboard. A full drag-and-drop plot compositor is deferred. |
+| [PicoScope 7 scope view](https://www.picotech.com/library/knowledge-bases/oscilloscopes/scope-view) | The signal takes most of the display; channel tools sit beside it, acquisition controls above it. | Reduce permanently expanded configuration; retain the existing acquisition controls outside the analysis workspace. |
+| [Saleae Logic 2 navigation](https://www.saleae.com/support/logic-software/viewing-and-analyzing-data/navigating-the-software) | Separate connection/capture controls, named sessions, and task-specific analysis side panels. | Keep analysis state distinct from hardware acquisition; expose log activity when configuration is hidden. Named capture-library sessions remain future work. |
+
+The inspected PicoScope, Saleae and Keysight screenshots reinforce these structural
+patterns, but are examples supplied in their documentation, not measurements of
+the latest installed releases. We borrow interaction ideas, not vendor artwork,
+logos, exact layouts or an implication of identical hardware capability.
+
+First implementation:
+
+- Collapse optional configuration by default; keep Save/Open/Set reference visible.
+  Move clearing history to More with a cancel-default confirmation. Disable actions
+  that require a selected capture when none exists.
+- Use readable numeric hierarchy and consistent channel accents. Keep names and
+  validity text, so neither identity nor warnings depend solely on colour. Imported
+  names remain plain text; long names must not expand the workspace.
+- Keep capture-browser and hardware state distinct. Following latest does not prove
+  the device is acquiring; freezing this view never stops USB acquisition. Logging
+  and its RAM-only/unexported status remain visible during focus mode.
+- Make common plot operations available as labelled controls as well as gestures.
+  Keyboard activation uses ordinary Qt controls rather than a custom icon-only rail.
+
+Acceptance checks are automated layout/interaction regressions plus synthetic GUI
+previews: at 1100×700 with three populated channels and a long name, the default
+workspace needs no scrollbars and the waveform widget occupies at least half the
+window height. Focus mode expands it without changing retention/logging and restores
+the previous panel state. Tests also cover keyboard activation, channel details,
+Fit record, explicit clipping, action availability, and cancel/confirm history clear.
+These checks do not substitute for user testing. Next evaluate real bench tasks:
+find a failed capture, pin/compare it, gate a measurement, and export a session;
+record misclicks and task time before deciding on a whole-application redesign.
 
 For an integrated GUI smoke test with a working OpenGL display:
 

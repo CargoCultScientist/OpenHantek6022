@@ -35,6 +35,9 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QTimer>
+#include <QAction>
+#include <QScrollArea>
+#include <QScrollBar>
 
 int verboseLevel = 0;
 
@@ -596,6 +599,13 @@ private slots:
         QCoreApplication::processEvents();
         if(qEnvironmentVariableIsSet("OH_WORKBENCH_SCREENSHOT")) {
             QVERIFY(dock.grab().save(qEnvironmentVariable("OH_WORKBENCH_SCREENSHOT")));
+            dock.findChild<QPushButton*>("labConfigure")->click();
+            QCoreApplication::processEvents();
+            QVERIFY(dock.grab().save(qEnvironmentVariable("OH_WORKBENCH_SCREENSHOT")+".settings.png"));
+            dock.findChild<QPushButton*>("labFocusView")->click();
+            QCoreApplication::processEvents();
+            QVERIFY(dock.grab().save(qEnvironmentVariable("OH_WORKBENCH_SCREENSHOT")+".focus.png"));
+            dock.findChild<QPushButton*>("labFocusView")->click();
             dock.findChild<QTabWidget*>("labControls")->setCurrentIndex(3);
             dock.findChild<QTabWidget*>("labViews")->setCurrentIndex(1);
             QCoreApplication::processEvents();
@@ -603,6 +613,80 @@ private slots:
         }
         dock.resize(1100,700); QCoreApplication::processEvents();
         QVERIFY(dock.width()<=1100); QVERIFY(dock.height()<=700);
+    }
+    void instrumentUiInteraction() {
+        ScopeDevice device; DsoSettings settings(&device);
+        settings.scope.voltage[0].name="<b>Supply</b> & " + QString(160,'x');
+        Lab::CaptureDock dock(&settings); dock.resize(1100,700); dock.show();
+        auto configure=dock.findChild<QPushButton*>("labConfigure");
+        auto focus=dock.findChild<QPushButton*>("labFocusView");
+        auto tabs=dock.findChild<QTabWidget*>("labControls");
+        auto sidebar=dock.findChild<QWidget*>("labHistorySidebar");
+        auto save=dock.findChild<QPushButton*>("labSaveCapture");
+        auto pin=dock.findChild<QPushButton*>("labSetReference");
+        auto plot=dock.findChild<QWidget*>("labCapturePlot");
+        auto scroll=dock.findChild<QScrollArea*>("labWorkbenchScroll");
+        auto badge=dock.findChild<QLabel*>("labSelectionBadge");
+        auto follow=dock.findChild<QCheckBox*>("labFollowLatest");
+        auto record=dock.findChild<QCheckBox*>("labRecordHistory");
+        auto collect=dock.findChild<QCheckBox*>("labCollectLog");
+        auto log=dock.findChild<QLabel*>("labLogBadge");
+        QVERIFY(configure && focus && tabs && sidebar && save && pin && plot && scroll && badge && follow && record && collect && log);
+        QVERIFY(tabs->isHidden()); QVERIFY(!save->isEnabled()); QVERIFY(!pin->isEnabled());
+        auto frame=std::make_shared<PPresult>(3); frame->tag=1; frame->capturedAtMs=1000;
+        for(unsigned channel=0;channel<3;++channel) {
+            auto data=frame->modifiableData(channel); data->voltage.interval=1e-6;
+            for(int i=0;i<1000;++i) data->voltage.samples.push_back(std::sin(2*M_PI*i/100));
+        }
+        collect->setChecked(true); dock.ingest(frame); QCoreApplication::processEvents();
+        QVERIFY(save->isEnabled()); QVERIFY(pin->isEnabled());
+        QVERIFY(badge->text().contains("FOLLOWING LATEST")); QVERIFY(!badge->text().contains("LIVE"));
+        QVERIFY(log->isVisible()); QVERIFY(log->text().contains("collecting")); QVERIFY(log->text().contains("unexported"));
+        auto name=dock.findChild<QLabel*>("labMetricName0"); QVERIFY(name);
+        QCOMPARE(name->text(),settings.scope.voltage[0].name); QCOMPARE(name->textFormat(),Qt::PlainText);
+        // With all three channels and a long imported name, the default view fits
+        // without scrolling and spends at least half its height on the waveform.
+        QCOMPARE(scroll->horizontalScrollBar()->maximum(),0); QCOMPARE(scroll->verticalScrollBar()->maximum(),0);
+        QVERIFY2(plot->height()>=dock.height()/2,qPrintable(QString::number(plot->height())));
+        const int normalWidth=plot->width(), normalHeight=plot->height();
+        configure->setFocus(); QTest::keyClick(configure,Qt::Key_Space); QCoreApplication::processEvents();
+        QVERIFY(tabs->isVisible()); QVERIFY(plot->height()<normalHeight);
+        tabs->setCurrentIndex(2);
+        focus->click(); QCoreApplication::processEvents();
+        QVERIFY(sidebar->isHidden()); QVERIFY(tabs->isHidden()); QVERIFY(!configure->isEnabled());
+        QVERIFY(plot->width()>normalWidth); QVERIFY(log->isVisible()); QVERIFY(collect->isChecked()); QVERIFY(record->isChecked());
+        focus->click(); QCoreApplication::processEvents();
+        QVERIFY(sidebar->isVisible()); QVERIFY(tabs->isVisible()); QCOMPARE(tabs->currentIndex(),2); QVERIFY(configure->isChecked());
+        configure->click();
+        follow->setChecked(false); QVERIFY(badge->text().contains("VIEW FROZEN"));
+        follow->setChecked(true); QVERIFY(badge->text().contains("FOLLOWING LATEST"));
+        pin->click();
+        const QPointF centre=plot->rect().center();
+        QWheelEvent wheel(centre,plot->mapToGlobal(centre.toPoint()),QPoint(),QPoint(0,1200),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);
+        QCoreApplication::sendEvent(plot,&wheel);
+        dock.findChild<QComboBox*>("labMeasurementSpan")->setCurrentIndex(1);
+        auto table=dock.findChild<QTableWidget*>("labMeasurements");
+        QVERIFY(!table->item(0,0)->text().contains("1000 samples"));
+        dock.findChild<QPushButton*>("labFitRecord")->click(); QVERIFY(table->item(0,0)->text().contains("1000 samples"));
+        dock.findChild<QPushButton*>("labMetricDetails1")->click();
+        QCOMPARE(dock.findChild<QTabWidget*>("labViews")->currentWidget(),table); QCOMPARE(table->currentRow(),1);
+        auto clear=dock.findChild<QAction*>("labClearHistory"); QVERIFY(clear);
+        auto list=dock.findChild<QListWidget*>("labCaptureList");
+        QTimer::singleShot(0,[&]{
+            auto dialog=qobject_cast<QMessageBox*>(QApplication::activeModalWidget()); QVERIFY(dialog);
+            QVERIFY(!record->isChecked()); QVERIFY(collect->isChecked()); dialog->button(QMessageBox::Cancel)->click();
+        });
+        clear->trigger(); QCOMPARE(list->count(),1); QVERIFY(record->isChecked());
+        QTimer::singleShot(0,[]{
+            auto dialog=qobject_cast<QMessageBox*>(QApplication::activeModalWidget()); QVERIFY(dialog);
+            dialog->button(QMessageBox::Yes)->click();
+        });
+        clear->trigger(); QCOMPARE(list->count(),0); QVERIFY(record->isChecked()); QVERIFY(!save->isEnabled());
+        QVERIFY(log->text().contains("1 in RAM")); // Clearing history never clears the log or reference.
+        frame=std::make_shared<PPresult>(*frame); frame->tag=2; frame->capturedAtMs+=10;
+        frame->modifiableData(0)->valid=false; dock.ingest(frame);
+        QVERIFY(dock.findChild<QLabel*>("labMetricStatus0")->text().contains("CLIPPED"));
+        QVERIFY(table->item(1,9)->text()!="—");
     }
     void captureBrowserMeasurementControls() {
         ScopeDevice device; DsoSettings settings(&device);

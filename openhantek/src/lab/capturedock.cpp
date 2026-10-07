@@ -7,10 +7,13 @@
 #include <QDateTime>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
+#include <QFrame>
 #include <QHeaderView>
+#include <QGridLayout>
 #include <QLabel>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QWheelEvent>
@@ -29,6 +32,44 @@ namespace Lab {
 static QString number(double value, Unit unit=UNIT_NONE) {
     return std::isfinite(value) ? valueToString(value,unit,5) : QString::fromUtf8("—");
 }
+static QColor channelColor(size_t channel) {
+    static const std::array<QColor,3> colors={QColor("#fbd46a"),QColor("#68c8ee"),QColor("#d6a0ed")};
+    return colors.at(channel);
+}
+// Use plain-text labels even for imported channel names. Colour reinforces the
+// channel name, but is never the only indication of identity or validity.
+class MeasurementCard : public QFrame {
+public:
+    QLabel *name, *state, *span;
+    std::array<QLabel*,3> values{};
+    QPushButton *details;
+    MeasurementCard(size_t channel,QWidget *parent) : QFrame(parent) {
+        setObjectName(QString("labMetricCard%1").arg(channel));
+        setStyleSheet(QString("QFrame#%1 { background: #182638; border: 1px solid #304359; border-left: 3px solid %2; border-radius: 5px; }")
+            .arg(objectName(),channelColor(channel).name()));
+        auto grid=new QGridLayout(this); grid->setContentsMargins(10,6,10,6); grid->setVerticalSpacing(1);
+        auto label=[&](const QString &id) {
+            auto result=new QLabel(this); result->setTextFormat(Qt::PlainText);
+            result->setObjectName(id+QString::number(channel)); return result;
+        };
+        name=label("labMetricName"); name->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);
+        name->setStyleSheet(QString("color: %1; font-weight: 600;").arg(channelColor(channel).name()));
+        grid->addWidget(name,0,0,1,2);
+        details=new QPushButton(tr("Details"),this); details->setObjectName(QString("labMetricDetails%1").arg(channel));
+        details->setAccessibleName(tr("Channel %1 measurement details").arg(channel+1));
+        details->setStyleSheet("padding: 1px 8px; background: transparent;"); grid->addWidget(details,0,2,Qt::AlignRight);
+        const QStringList titles={tr("Peak-to-peak"),tr("Frequency"),tr("RMS")};
+        for(size_t i=0;i<values.size();++i) {
+            auto caption=new QLabel(titles[int(i)],this); caption->setStyleSheet("color: #a6b9cf; font-size: 11px;");
+            grid->addWidget(caption,1,int(i));
+            values[i]=label(QString("labMetric%1Value").arg(i));
+            values[i]->setStyleSheet("color: #edf4fb; font-size: 18px; font-weight: 600;");
+            grid->addWidget(values[i],2,int(i)); grid->setColumnStretch(int(i),1);
+        }
+        state=label("labMetricStatus"); state->setWordWrap(true); grid->addWidget(state,3,0,1,3);
+        span=label("labMetricSpan"); span->setStyleSheet("color: #a6b9cf; font-size: 11px;"); grid->addWidget(span,4,0,1,3);
+    }
+};
 class CapturePlot : public QWidget {
 public:
     using QWidget::QWidget;
@@ -43,6 +84,7 @@ public:
     std::function<void(double,bool)> cursorPlaced;
     QPoint dragStart;
     double dragPan=0;
+    void fitRecord() {zoom=1;pan=0;update();if(viewChanged) viewChanged();}
     TimeSpan visibleSpan() const {
         double start=std::numeric_limits<double>::infinity(), end=-start;
         if(current) for(const auto &ch:current->channels) {
@@ -80,13 +122,12 @@ protected:
             update(); if(viewChanged) viewChanged();
         }
     }
-    void mouseDoubleClickEvent(QMouseEvent *) override {zoom=1;pan=0;update();if(viewChanged) viewChanged();}
+    void mouseDoubleClickEvent(QMouseEvent *) override {fitRecord();}
     void paintEvent(QPaintEvent *) override {
         QPainter p(this);
         p.fillRect(rect(),QColor("#101a27"));
         p.setPen(QColor("#b6c6d6"));
         if(!current) {p.drawText(rect(),Qt::AlignCenter,tr("Waiting for a displayed acquisition")); return;}
-        const std::array<QColor,3> colors={QColor("#fbd46a"),QColor("#68c8ee"),QColor("#d6a0ed")};
         const int count=int(std::count_if(current->channels.begin(),current->channels.end(),[](const auto &ch){return !ch.signal.samples.empty();}));
         const auto view=visibleSpan();
         const double start=view.start, end=view.end;
@@ -118,7 +159,7 @@ protected:
                 for(double time:{gate.start,gate.end}) if(std::isfinite(time) && time>=start && time<=end)
                     p.drawLine(QPointF(x(time),area.top()),QPointF(x(time),area.bottom()));
             }
-            p.setPen(colors[size_t(c)]);
+            p.setPen(channelColor(size_t(c)));
             p.drawText(QRectF(4,area.top()-20,85,20),Qt::AlignLeft,ch.name.left(18));
             p.setPen(QColor("#b6c6d6"));
             p.drawText(QRectF(4,area.top(),85,20),Qt::AlignLeft,number(high,ch.unit));
@@ -128,7 +169,7 @@ protected:
             auto draw=[&](const CaptureChannel &channel,double origin,bool dashed) {
                 if(channel.signal.samples.empty() || !(channel.signal.interval>0)) return;
                 p.save(); p.setClipRect(area);
-                QPen pen(colors[size_t(c)],dashed?1.0:1.5,dashed?Qt::DashLine:Qt::SolidLine); p.setPen(pen);
+                QPen pen(channelColor(size_t(c)),dashed?1.0:1.5,dashed?Qt::DashLine:Qt::SolidLine); p.setPen(pen);
                 // Min/max envelope per pixel preserves narrow peaks when zoomed out.
                 const int pixels=std::max(1,int(area.width()));
                 QPointF previous; bool havePrevious=false;
@@ -172,6 +213,11 @@ CaptureDock::CaptureDock(const DsoSettings *settings, QWidget *parent)
         }
         QWidget#labWorkbench QPushButton:hover { background: #2e4560; border-color: #62c7d5; }
         QWidget#labWorkbench QPushButton:pressed { background: #355d70; }
+        QWidget#labWorkbench QPushButton:checked { background: #284b60; border-color: #79dfda; }
+        QWidget#labWorkbench QPushButton:disabled { color: #8092a6; background: #162333; border-color: #293c52; }
+        QWidget#labWorkbench QMenu { background: #203044; color: #e4eef8; border: 1px solid #526b85; }
+        QWidget#labWorkbench QMenu::item { padding: 8px 18px; }
+        QWidget#labWorkbench QMenu::item:selected { background: #355d70; }
         QWidget#labWorkbench QPushButton:focus, QWidget#labWorkbench QComboBox:focus,
         QWidget#labWorkbench QDoubleSpinBox:focus { border-color: #79dfda; }
         QWidget#labWorkbench QDoubleSpinBox:disabled { color: #71839a; background: #162333; }
@@ -197,26 +243,35 @@ CaptureDock::CaptureDock(const DsoSettings *settings, QWidget *parent)
         QWidget#labWorkbench QComboBox QAbstractItemView { background: #203044; color: #e4eef8; selection-background-color: #355d70; }
     )"));
     layout->setContentsMargins(12,10,12,10); layout->setSpacing(8);
-    auto heading=new QHBoxLayout;
-    auto title=new QLabel(tr("CAPTURE LAB"),body); title->setStyleSheet("color: #93e4d9; font-size: 18px; font-weight: 600;");
-    heading->addWidget(title);
-    auto subtitle=new QLabel(tr("Inspect. Compare. Measure."),body); heading->addWidget(subtitle); heading->addStretch();
-    selectionBadge=new QLabel(body); selectionBadge->setObjectName("labSelectionBadge");
-    selectionBadge->setStyleSheet("background: #243d50; color: #bcf0e5; border-radius: 5px; padding: 5px 10px;");
-    heading->addWidget(selectionBadge); layout->addLayout(heading);
     auto controls=new QHBoxLayout;
-    record=new QCheckBox(tr("Record history"),body); record->setChecked(true);
-    live=new QCheckBox(tr("Follow latest"),body); live->setChecked(true);
-    controls->addWidget(record); controls->addWidget(live);
+    auto title=new QLabel(tr("Capture Lab"),body); title->setStyleSheet("color: #dce7f3; font-size: 16px; font-weight: 600; padding-right: 12px;");
+    controls->addWidget(title);
     auto button=[&](const QString &text,auto callback) {
         auto b=new QPushButton(text,body); controls->addWidget(b); connect(b,&QPushButton::clicked,this,callback); return b;
     };
-    button(tr("Save capture…"),[this]{saveCapture();});
+    saveButton=button(tr("Save capture…"),[this]{saveCapture();}); saveButton->setObjectName("labSaveCapture");
     button(tr("Open capture…"),[this]{openCapture();});
-    button(tr("Set reference"),[this]{reference=selected; resetMask();});
-    button(tr("Clear reference"),[this]{reference.reset(); resetMask();});
-    button(tr("Clear history"),[this]{history.clear(); selected.reset(); statistics.clear(); resetMask();});
-    controls->addStretch(); layout->addLayout(controls);
+    referenceButton=button(tr("Set reference"),[this]{reference=selected; resetMask();});
+    referenceButton->setObjectName("labSetReference");
+    controls->addStretch();
+    auto configure=new QPushButton(tr("Analysis settings"),body); configure->setObjectName("labConfigure"); configure->setCheckable(true);
+    configure->setToolTip(tr("Show measurement, reference, mask and session-log settings. This does not change acquisition settings.")); controls->addWidget(configure);
+    auto focus=new QPushButton(tr("Focus view"),body); focus->setObjectName("labFocusView"); focus->setCheckable(true);
+    focus->setToolTip(tr("Hide history and analysis settings to give the current view more space. Recording and logging are unchanged.")); controls->addWidget(focus);
+    auto more=new QPushButton(tr("More"),body); more->setObjectName("labMore");
+    auto menu=new QMenu(more); auto clearAction=menu->addAction(tr("Clear history…"),this,&CaptureDock::clearHistory);
+    clearAction->setObjectName("labClearHistory"); more->setMenu(menu); controls->addWidget(more); layout->addLayout(controls);
+    auto activity=new QHBoxLayout;
+    record=new QCheckBox(tr("Record history"),body); record->setObjectName("labRecordHistory"); record->setChecked(true);
+    record->setToolTip(tr("Retain displayed captures in RAM. Turning this off does not stop acquisition or session logging."));
+    live=new QCheckBox(tr("Follow latest"),body); live->setObjectName("labFollowLatest"); live->setChecked(true);
+    live->setToolTip(tr("Follow newly retained captures. This is a browser setting, not the scope's Run/Stop control."));
+    activity->addWidget(record); activity->addWidget(live);
+    selectionBadge=new QLabel(body); selectionBadge->setObjectName("labSelectionBadge");
+    selectionBadge->setToolTip(tr("Capture-browser state only. Use the oscilloscope's acquisition controls for Run/Stop or SINGLE."));
+    activity->addWidget(selectionBadge); activity->addStretch();
+    logBadge=new QLabel(body); logBadge->setObjectName("labLogBadge"); logBadge->setTextFormat(Qt::PlainText);
+    activity->addWidget(logBadge); layout->addLayout(activity);
     auto tabs=new QTabWidget(body); tabs->setObjectName("labControls");
     auto page=[&](const QString &name) {
         auto widget=new QWidget(tabs); auto box=new QVBoxLayout(widget); box->setContentsMargins(10,6,10,6);
@@ -224,6 +279,8 @@ CaptureDock::CaptureDock(const DsoSettings *settings, QWidget *parent)
     };
     auto measurePage=page(tr("Measure")); auto referencePage=page(tr("Reference")); auto maskPage=page(tr("Mask test")); auto logPage=page(tr("Session log"));
     layout->addWidget(tabs);
+    tabs->hide();
+    connect(configure,&QPushButton::toggled,tabs,&QWidget::setVisible);
     auto comparison=new QHBoxLayout;
     align=new QCheckBox(tr("Align trigger"),body);
     align->setToolTip(tr("Time zero is the trigger when available, otherwise the record start. Reference comparison requires both captures to be triggered."));
@@ -231,6 +288,8 @@ CaptureDock::CaptureDock(const DsoSettings *settings, QWidget *parent)
     comparison->addWidget(new QLabel(tr("Reference time shift (s):"),body));
     offset=new QDoubleSpinBox(body); offset->setDecimals(9); offset->setRange(-1e3,1e3); offset->setSingleStep(.000001);
     comparison->addWidget(offset);
+    clearReferenceButton=new QPushButton(tr("Clear reference"),body); comparison->addWidget(clearReferenceButton);
+    connect(clearReferenceButton,&QPushButton::clicked,this,[this]{reference.reset(); resetMask();});
     comparison->addStretch(); referencePage->addLayout(comparison);
     referencePage->addWidget(new QLabel(tr("Solid trace: selected capture   /   Dashed trace: pinned reference   /   Differences use interpolation, never extrapolation."),body));
     auto measurementControls=new QHBoxLayout;
@@ -294,17 +353,24 @@ CaptureDock::CaptureDock(const DsoSettings *settings, QWidget *parent)
     });
     connect(collectLog,&QCheckBox::toggled,this,[this](bool enabled){if(enabled) measurementLog.breakSegment(); refresh();});
     auto splitter=new QSplitter(body);
-    auto sidebar=new QWidget(splitter); sidebar->setMinimumWidth(190); sidebar->setMaximumWidth(270);
+    auto sidebar=new QWidget(splitter); sidebar->setObjectName("labHistorySidebar"); sidebar->setMinimumWidth(175); sidebar->setMaximumWidth(240);
     auto sidebarLayout=new QVBoxLayout(sidebar); sidebarLayout->setContentsMargins(0,0,0,0);
     historyFilter=new QComboBox(sidebar); historyFilter->setObjectName("labHistoryFilter");
     historyFilter->setToolTip(tr("Filter the list under the current mask criterion. The selected waveform is unchanged until you select another capture."));
     historyFilter->addItems({tr("All captures"),tr("Mask failures"),tr("Mask passes"),tr("Not testable")}); sidebarLayout->addWidget(historyFilter);
     list=new QListWidget(sidebar); list->setObjectName("labCaptureList"); sidebarLayout->addWidget(list);
+    connect(focus,&QPushButton::toggled,this,[sidebar,tabs,configure](bool focused){
+        sidebar->setVisible(!focused); tabs->setVisible(!focused && configure->isChecked()); configure->setEnabled(!focused);
+    });
     auto views=new QTabWidget(splitter); views->setObjectName("labViews");
     plot=new CapturePlot(views); plot->setObjectName("labCapturePlot"); plot->setMinimumSize(420,180);
     trend=new TrendPlot(&measurementLog,views); trend->setObjectName("labTrendPlot");
     views->addTab(plot,tr("Waveform")); views->addTab(trend,tr("Trend")); splitter->setStretchFactor(1,1);
     plot->setToolTip(tr("Wheel to zoom · Drag to pan · Double-click to reset · Shift-click cursor A · Ctrl-click cursor B"));
+    auto fit=new QPushButton(tr("Fit record"),views); fit->setObjectName("labFitRecord");
+    fit->setToolTip(tr("Reset waveform zoom and pan. Acquisition settings are unchanged.")); views->setCornerWidget(fit);
+    connect(fit,&QPushButton::clicked,this,[this]{plot->fitRecord();});
+    connect(views,&QTabWidget::currentChanged,this,[fit](int index){fit->setVisible(index==0);});
     connect(trendMetric,qOverload<int>(&QComboBox::currentIndexChanged),this,[this](int metric){trend->metric=metric; trend->update();});
     plot->viewChanged=[this]{if(spanMode->currentIndex()==1) resetStatistics(); else refresh();};
     plot->cursorPlaced=[this](double value,bool second){
@@ -313,9 +379,10 @@ CaptureDock::CaptureDock(const DsoSettings *settings, QWidget *parent)
     layout->addWidget(splitter,1);
     auto meterRow=new QHBoxLayout;
     for(size_t channel=0;channel<quickMetrics.size();++channel) {
-        auto meter=new QLabel(body); meter->setTextFormat(Qt::PlainText); meter->setWordWrap(true);
-        meter->setStyleSheet("background: #1b2d40; color: #d4e6f5; border-radius: 5px; padding: 7px 10px;");
-        meter->setMinimumHeight(36); meter->setMaximumHeight(68); meterRow->addWidget(meter,1); quickMetrics[channel]=meter;
+        auto meter=new MeasurementCard(channel,body); meterRow->addWidget(meter,1); quickMetrics[channel]=meter;
+        connect(meter->details,&QPushButton::clicked,this,[this,views,channel]{
+            views->setCurrentWidget(measurements); measurements->selectRow(int(channel));
+        });
     }
     layout->addLayout(meterRow);
     measurements=new QTableWidget(views); views->addTab(measurements,tr("Measurements"));
@@ -340,7 +407,8 @@ CaptureDock::CaptureDock(const DsoSettings *settings, QWidget *parent)
         live->setChecked(false); selected=history.frames()[size_t(row)]; refresh();
     });
     connect(live,&QCheckBox::toggled,this,[this](bool enabled){
-        if(enabled && !history.frames().empty()) {selected=history.frames().back(); refreshList(); refresh();}
+        if(enabled && !history.frames().empty()) {selected=history.frames().back(); refreshList();}
+        refresh();
     });
     connect(record,&QCheckBox::toggled,this,[this]{refresh();});
     connect(align,&QCheckBox::toggled,this,[this]{statistics.clear(); resetMask();});
@@ -430,11 +498,18 @@ void CaptureDock::refresh() {
     const auto mask=selected && maskEnabled->isChecked()?(found!=maskResults.end()?found->second:maskResult(*selected)):MaskResult{};
     plot->maskChannel=size_t(maskChannel->currentIndex());
     plot->maskTolerance=maskEnabled->isChecked() && mask.state!=MaskState::Untestable?mask.tolerance:unavailable;
-    selectionBadge->setText(selected?(!record->isChecked()?tr("HISTORY PAUSED  ·  #%1"):live->isChecked()?tr("LIVE  ·  #%1"):tr("FROZEN  ·  #%1")).arg(selected->tag):tr("NO CAPTURE"));
+    selectionBadge->setText(selected?(!record->isChecked()?tr("HISTORY PAUSED  ·  #%1"):live->isChecked()?tr("FOLLOWING LATEST  ·  #%1"):tr("VIEW FROZEN  ·  #%1")).arg(selected->tag):tr("NO CAPTURE"));
     if(selected && maskEnabled->isChecked()) selectionBadge->setText(selectionBadge->text()+"  ·  "+maskStateName(mask.state));
     if(list->currentItem() && list->currentItem()->isHidden()) selectionBadge->setText(selectionBadge->text()+tr("  ·  outside filter"));
     const QString badgeColor=maskEnabled->isChecked()?(mask.state==MaskState::Fail?"#ffb0b0":mask.state==MaskState::Pass?"#a5efd0":"#ecd09d"):"#bcf0e5";
     selectionBadge->setStyleSheet(QString("background: #243d50; color: %1; border-radius: 5px; padding: 5px 10px;").arg(badgeColor));
+    saveButton->setEnabled(bool(selected)); referenceButton->setEnabled(bool(selected)); clearReferenceButton->setEnabled(bool(reference));
+    const bool unsaved=logRevision!=exportedLogRevision;
+    logBadge->setText(tr("Log: %1 · %2 in RAM%3")
+        .arg(collectLog->isChecked()?tr("collecting"):tr("paused")).arg(measurementLog.entries().size())
+        .arg(unsaved?tr(" · unexported"):QString()));
+    logBadge->setStyleSheet(QString("color: %1;").arg(unsaved?"#ecd09d":"#a6b9cf"));
+    logBadge->setToolTip(tr("Session-log collection is independent of history and Follow latest. RAM readings are lost on a crash; export CSV to keep them."));
     Unit maskUnit=UNIT_NONE;
     if(reference && maskSpec().channel<reference->channels.size()) maskUnit=reference->channels[maskSpec().channel].unit;
     maskSummary->setText(maskEnabled->isChecked()?
@@ -453,12 +528,6 @@ void CaptureDock::refresh() {
         const double origin=timeOrigin(*selected,ch,align->isChecked());
         const auto range=sampleRange(ch.signal.samples.size(),ch.signal.interval,origin,span);
         const auto m=measure(ch.signal.samples,ch.signal.interval,ch.valid,range);
-        if(!ch.signal.samples.empty()) {
-            quickMetrics[c]->setText(tr("%1  ·  Pk–Pk %2  ·  %3\nRMS %4  ·  %5")
-                .arg(ch.name,number(m.vpp,ch.unit),number(m.frequency,UNIT_HERTZ),number(m.rms,ch.unit),
-                    m.clipped?tr("CLIPPED"):m.undersampled?tr("Sampling-limited"):spanMode->currentText()));
-            quickMetrics[c]->show();
-        }
         const auto difference=reference?compare(*selected,*reference,c,align->isChecked(),offset->value(),span):Difference{};
         QString state;
         if(!m.count) state=tr("No finite samples in span");
@@ -467,6 +536,14 @@ void CaptureDock::refresh() {
         else if(m.undersampled) state=tr("Sampling-limited timing");
         else if(!std::isfinite(m.frequency)) state=tr("Insufficient complete cycles");
         else state=tr("Interpolated timing estimate");
+        if(!ch.signal.samples.empty()) {
+            auto meter=quickMetrics[c]; meter->name->setText(ch.name); meter->name->setToolTip(ch.name);
+            meter->values[0]->setText(number(m.vpp,ch.unit)); meter->values[1]->setText(number(m.frequency,UNIT_HERTZ));
+            meter->values[2]->setText(number(m.rms,ch.unit)); meter->state->setText(state);
+            meter->state->setStyleSheet(QString("color: %1; font-size: 11px;")
+                .arg(!m.count || m.clipped || m.undersampled || m.irregular?"#ffc184":"#a6b9cf"));
+            meter->span->setText(tr("%1 · %2 samples").arg(spanMode->currentText()).arg(m.count)); meter->show();
+        }
         if(reference && !difference.error.isEmpty()) state+=" · "+difference.error;
         const auto &channelStats=statistics.channels[c];
         const auto &stats=statisticMetric->currentIndex()==2?channelStats.frequency:statisticMetric->currentIndex()==1?channelStats.rms:channelStats.vpp;
@@ -486,6 +563,7 @@ void CaptureDock::refresh() {
             number(m.minimum,ch.unit),number(m.maximum,ch.unit),number(m.acRms,ch.unit),number(m.period,UNIT_SECONDS),
             percent(m.negativeDuty),number(m.negativeWidth,UNIT_SECONDS),number(m.cycleMean,ch.unit),number(m.cycleRms,ch.unit),number(m.crestFactor)};
         for(int col=0;col<cells.size();++col) measurements->setItem(int(c),col,new QTableWidgetItem(cells[col]));
+        measurements->item(int(c),0)->setForeground(channelColor(c));
         const QString cycles=tr("%1 complete cycles over %2 inside the measurement span. Mean/RMS integrate linearly interpolated samples.")
             .arg(m.cycles).arg(number(m.cycleSpan,UNIT_SECONDS));
         measurements->item(int(c),19)->setToolTip(cycles); measurements->item(int(c),20)->setToolTip(cycles);
@@ -522,6 +600,15 @@ void CaptureDock::openCapture() {
     if(!capture) {QMessageBox::warning(this,tr("Open capture"),error); return;}
     live->setChecked(false); selected=std::move(capture); refreshList(); refresh();
 }
+void CaptureDock::clearHistory() {
+    if(history.frames().empty() && !selected) return;
+    const bool recording=record->isChecked(); record->setChecked(false);
+    const auto choice=QMessageBox::question(this,tr("Clear capture history"),
+        tr("Remove the retained captures and selected view from this session?\nSaved files, the pinned reference and the measurement log are kept.\nHistory recording is paused while you decide."),
+        QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel);
+    if(choice==QMessageBox::Yes) {history.clear(); selected.reset(); statistics.clear(); resetMask();}
+    record->setChecked(recording);
+}
 bool CaptureDock::exportLog() {
     if(measurementLog.entries().empty()) {QMessageBox::information(this,tr("Export log"),tr("Collect some measurements first.")); return false;}
     const auto snapshot=measurementLog; // Live logging can continue inside the nested file dialog.
@@ -532,6 +619,7 @@ bool CaptureDock::exportLog() {
     QString error;
     if(!snapshot.saveCsv(dialog.selectedFiles().first(),error)) {QMessageBox::warning(this,tr("Export log"),error); return false;}
     exportedLogRevision=revision;
+    refresh();
     return true;
 }
 bool CaptureDock::confirmDiscardLog() {

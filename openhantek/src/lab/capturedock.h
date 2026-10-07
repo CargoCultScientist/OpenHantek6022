@@ -14,10 +14,12 @@ class QTableWidget;
 class QCheckBox;
 class QDoubleSpinBox;
 class QComboBox;
+class QPushButton;
 class DsoSettings;
 namespace Lab {
 class CapturePlot;
 class TrendPlot;
+class MeasurementCard;
 class CaptureDock : public QDockWidget {
     Q_OBJECT
 public:
@@ -37,8 +39,9 @@ private:
     QListWidget *list;
     CapturePlot *plot;
     TrendPlot *trend;
-    QLabel *status, *selectionBadge, *maskSummary, *logSummary;
-    std::array<QLabel*,3> quickMetrics{};
+    QLabel *status, *selectionBadge, *maskSummary, *logSummary, *logBadge;
+    std::array<MeasurementCard*,3> quickMetrics{};
+    QPushButton *saveButton, *referenceButton, *clearReferenceButton;
     QTableWidget *measurements;
     QCheckBox *live, *record, *align, *details, *maskEnabled, *freezeOnFailure, *collectLog;
     QDoubleSpinBox *offset, *cursorA, *cursorB;
@@ -57,6 +60,7 @@ private:
     void refresh();
     void saveCapture();
     void openCapture();
+    void clearHistory();
     bool exportLog();
 };
 }
