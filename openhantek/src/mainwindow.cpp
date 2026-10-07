@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "mainwindow.h"
+#include <QCloseEvent>
 #include "src/ui_mainwindow.h"
 
 #include "HorizontalDock.h"
@@ -764,6 +765,10 @@ bool MainWindow::openDocument( QString docName ) {
 /// \brief Save the settings before exiting.
 /// \param event The close event that should be handled.
 void MainWindow::closeEvent( QCloseEvent *event ) {
+    if ( !captureDock->confirmDiscardLog() ) {
+        event->ignore();
+        return;
+    }
     if ( dsoSettings->scope.verboseLevel > 2 )
         qDebug() << "  MainWindow::closeEvent()";
     if ( dsoSettings->alwaysSave ) {

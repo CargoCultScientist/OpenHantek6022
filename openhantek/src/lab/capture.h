@@ -46,6 +46,8 @@ struct Difference { size_t count=0; double rms=0, maximum=0; QString error; };
 // overlap; no extrapolation or automatic phase fitting hides actual differences.
 Difference compare(const Capture &, const Capture &, size_t channel, bool alignTrigger, double offset=0, TimeSpan span={});
 double timeOrigin(const Capture &, const CaptureChannel &, bool alignTrigger);
+bool interpolatedSample(const SampleValues &, double time, double origin, double &value);
+QJsonObject captureSetup(const Capture &);
 struct ChannelStatistics {
     RunningStatistic vpp, rms, frequency;
 };

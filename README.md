@@ -1,7 +1,8 @@
 # OpenHantek Lab (experimental fork)
 
-This fork adds a correctness baseline, bounded capture history, reference comparison
-and gated measurements with setup-aware statistics. See [LAB.md](LAB.md) for build/run instructions, tests,
+This fork adds a correctness baseline and a Capture Lab workbench: bounded history,
+reference masks, gated measurements, setup-aware statistics and session logging with
+CSV export and trends. See [LAB.md](LAB.md) for build/run instructions, tests,
 safety boundaries and the capture format. The installed upstream app is not replaced.
 
 The original OpenHantek6022 documentation follows below.

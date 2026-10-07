@@ -18,6 +18,8 @@
 #include "lab/capture.h"
 #include "lab/capturedock.h"
 #include "lab/measurements.h"
+#include "lab/mask.h"
+#include "lab/measurementlog.h"
 #include "post/postprocessing.h"
 #include "post/graphgenerator.h"
 #include "mainwindow.h"
@@ -29,6 +31,10 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QWheelEvent>
+#include <QTabWidget>
+#include <QLabel>
+#include <QMessageBox>
+#include <QTimer>
 
 int verboseLevel = 0;
 
@@ -409,6 +415,64 @@ private slots:
         const auto latest=qvariant_cast<std::shared_ptr<PPresult>>(output[0][0]);
         QCOMPARE(latest->tag,20u);
     }
+    void referenceMaskSafety() {
+        Lab::Capture reference;
+        reference.channels.push_back({"CH1",UNIT_VOLTS,{{0,1,0,-1,0},1},true});
+        Lab::Capture current=reference;
+        Lab::MaskSpec spec{0,0,5}; // 5% of 2 Vpp = ±0.1 V, including at zero crossings.
+        auto result=Lab::testMask(current,&reference,spec);
+        QCOMPARE(result.state,Lab::MaskState::Pass); QCOMPARE(result.tested,size_t(5)); QCOMPARE(result.tolerance,.1);
+        current.channels[0].signal.samples[1]+= .1;
+        QCOMPARE(Lab::testMask(current,&reference,spec).state,Lab::MaskState::Pass);
+        current.channels[0].signal.samples[2]=.11;
+        result=Lab::testMask(current,&reference,spec);
+        QCOMPARE(result.state,Lab::MaskState::Fail); QCOMPARE(result.outside,size_t(1));
+        QCOMPARE(Lab::testMask(current,&reference,spec,false,1).state,Lab::MaskState::Untestable); // Partial overlap never passes.
+        current=reference; current.channels[0].valid=false;
+        QCOMPARE(Lab::testMask(current,&reference,spec).state,Lab::MaskState::Untestable);
+        current=reference; current.channels[0].unit=UNIT_WATTS;
+        QCOMPARE(Lab::testMask(current,&reference,spec).state,Lab::MaskState::Untestable);
+        current=reference; current.channels[0].signal.samples[3]=Lab::unavailable;
+        QCOMPARE(Lab::testMask(current,&reference,spec).state,Lab::MaskState::Untestable);
+        current=reference;
+        QCOMPARE(Lab::testMask(current,nullptr,spec).state,Lab::MaskState::Untestable);
+        QCOMPARE(Lab::testMask(current,&reference,spec,true).state,Lab::MaskState::Untestable);
+        current.triggered=reference.triggered=true; current.triggerPosition=reference.triggerPosition=2;
+        QCOMPARE(Lab::testMask(current,&reference,spec,true).state,Lab::MaskState::Pass);
+        current.channels[0].signal={{0,.5,1,.5,0,-.5,-1,-.5,0},.5};
+        QCOMPARE(Lab::testMask(current,&reference,spec).state,Lab::MaskState::Pass); // Different sample grid.
+        spec.absoluteTolerance=-1;
+        QCOMPARE(Lab::testMask(current,&reference,spec).state,Lab::MaskState::Untestable);
+        spec={0,0,0}; reference.channels[0].signal.samples={0,0,0,0,0}; current=reference;
+        current.channels[0].signal.samples[2]=1e-15;
+        QCOMPARE(Lab::testMask(current,&reference,spec).state,Lab::MaskState::Fail); // No hidden voltage floor.
+    }
+    void maskBrowserInteraction() {
+        ScopeDevice device; DsoSettings settings(&device);
+        Lab::CaptureDock dock(&settings); dock.resize(1500,800); dock.show();
+        auto frame=std::make_shared<PPresult>(1); frame->tag=1; frame->capturedAtMs=100;
+        frame->modifiableData(0)->voltage={{0,1,0,-1,0},.001}; dock.ingest(frame);
+        for(auto button:dock.findChildren<QPushButton*>()) if(button->text()=="Set reference") button->click();
+        auto enable=dock.findChild<QCheckBox*>("labMaskEnabled");
+        auto freeze=dock.findChild<QCheckBox*>("labFreezeOnFailure");
+        auto filter=dock.findChild<QComboBox*>("labHistoryFilter");
+        auto summary=dock.findChild<QLabel*>("labMaskSummary");
+        auto badge=dock.findChild<QLabel*>("labSelectionBadge");
+        auto list=dock.findChild<QListWidget*>();
+        QVERIFY(enable && freeze && filter && summary && badge && list);
+        enable->setChecked(true); freeze->setChecked(true);
+        frame=std::make_shared<PPresult>(*frame); frame->tag=2; dock.ingest(frame);
+        QVERIFY(summary->text().contains("1 pass / 0 fail"));
+        frame=std::make_shared<PPresult>(*frame); frame->tag=3; frame->modifiableData(0)->voltage.samples[2]=.5; dock.ingest(frame);
+        QVERIFY(summary->text().contains("1 pass / 1 fail")); QVERIFY(badge->text().contains("FROZEN"));
+        dock.ingest(frame); QVERIFY(summary->text().contains("1 pass / 1 fail"));
+        filter->setCurrentIndex(1);
+        QVERIFY(list->item(0)->isHidden()); QVERIFY(list->item(1)->isHidden()); QVERIFY(!list->item(2)->isHidden());
+        list->setCurrentRow(0); list->setCurrentRow(2);
+        QVERIFY(summary->text().contains("1 pass / 1 fail")); // Browsing/retesting is not a new acquisition.
+        dock.findChild<QDoubleSpinBox*>("labMaskTolerance")->setValue(30);
+        QVERIFY(list->item(2)->isHidden()); QVERIFY(summary->text().contains("0 pass / 0 fail"));
+    }
     void captureBrowserInteraction() {
         ScopeDevice device;DsoSettings settings(&device);
         Lab::CaptureDock dock(&settings); dock.resize(1500,650);dock.show();
@@ -429,6 +493,116 @@ private slots:
             QTest::qWait(100);
             QVERIFY(dock.grab().save(qEnvironmentVariable("OH_CAPTURE_SCREENSHOT")));
         }
+    }
+    void measurementLogSegmentsAndCsv() {
+        Lab::Capture frame; frame.tag=1; frame.capturedAtMs=1000;
+        frame.channels.push_back({"=SUM(1,2)\"\nCH1",UNIT_VOLTS,{{0,1,0,-1,0},.001},true});
+        Lab::MeasurementLog log(3); Lab::LogOptions options;
+        QVERIFY(log.append(frame,options)); QVERIFY(!log.append(frame,options));
+        auto next=[&]{++frame.tag; frame.capturedAtMs+=100;};
+        next(); QVERIFY(log.append(frame,options)); QCOMPARE(log.entries().back().segment,quint64(1));
+        options.span={.001,.003}; next(); QVERIFY(log.append(frame,options));
+        QCOMPARE(log.entries().back().segment,quint64(2)); QCOMPARE(log.entries().back().values.count,size_t(3));
+        frame.channels[0].unit=UNIT_NONE; next(); QVERIFY(log.append(frame,options));
+        QCOMPARE(log.entries().back().segment,quint64(3)); QCOMPARE(log.entries().size(),size_t(3)); QCOMPARE(log.evicted(),quint64(1));
+        options.intervalMs=500; next(); QVERIFY(log.append(frame,options));
+        const auto segment=log.entries().back().segment;
+        next(); QVERIFY(!log.append(frame,options)); frame.capturedAtMs+=400; ++frame.tag; QVERIFY(log.append(frame,options));
+        QCOMPARE(log.entries().back().segment,segment);
+        frame.capturedAtMs=500; ++frame.tag; QVERIFY(log.append(frame,options));
+        QCOMPARE(log.entries().back().segment,segment+1); // A backward wall clock must not join the previous trend.
+        log.breakSegment(); next(); QVERIFY(log.append(frame,options)); QCOMPARE(log.entries().back().segment,segment+2);
+        QLocale::setDefault(QLocale(QLocale::German));
+        QBuffer buffer; buffer.open(QIODevice::ReadWrite); QVERIFY(log.writeCsv(buffer));
+        QLocale::setDefault(QLocale::c());
+        QVERIFY(buffer.data().startsWith("timestamp_utc,tag,segment"));
+        QVERIFY(buffer.data().contains("\"'=SUM(1,2)\"\"\nCH1\"")); // Text escaped and spreadsheet formula neutralized.
+        QVERIFY(buffer.data().contains("1970-01-01T00:00:00.600Z"));
+        // Parse RFC-style quoted fields, including the embedded newline/quote in the channel name.
+        QList<QStringList> csvRows; QStringList fields; QString field; bool quoted=false;
+        const auto csv=QString::fromUtf8(buffer.data());
+        for(int i=0;i<csv.size();++i) {
+            const auto ch=csv[i];
+            if(ch=='"') {
+                if(quoted && i+1<csv.size() && csv[i+1]=='"') {field+='"'; ++i;} else quoted=!quoted;
+            } else if(!quoted && ch==',') {fields<<field; field.clear();}
+            else if(!quoted && ch=='\n') {fields<<field; csvRows<<fields; fields.clear();field.clear();}
+            else if(quoted || ch!='\r') field+=ch;
+        }
+        QVERIFY(!quoted); QCOMPARE(csvRows.size(),4);
+        for(const auto &row:csvRows) QCOMPARE(row.size(),29);
+        QCOMPARE(csvRows.back()[3],QString("'=SUM(1,2)\"\nCH1"));
+        QCOMPARE(csvRows.back()[4],QString("1")); QCOMPARE(csvRows.back()[5],QString("3"));
+        QCOMPARE(csvRows.back()[6].toDouble(),.001); QCOMPARE(csvRows.back()[7].toDouble(),.003);
+        QVERIFY(buffer.data().contains("displayed acquisitions only; gaps possible"));
+        QVERIFY(!buffer.data().contains("nan"));
+        QString error; const auto path=config.filePath("measurements.csv"); QVERIFY2(log.saveCsv(path,error),qPrintable(error));
+        QFile saved(path); QVERIFY(saved.open(QIODevice::ReadOnly)); QCOMPARE(saved.readAll(),buffer.data());
+        QVERIFY(!log.saveCsv(config.path(),error));
+        class FailingDevice : public QIODevice {
+            qint64 readData(char*,qint64) override {return -1;}
+            qint64 writeData(const char*,qint64) override {return -1;}
+        } failing;
+        failing.open(QIODevice::WriteOnly); QVERIFY(!log.writeCsv(failing));
+        log.clear(); QVERIFY(log.entries().empty()); QCOMPARE(log.evicted(),quint64(0));
+    }
+    void measurementLoggingIndependentOfHistory() {
+        ScopeDevice device; DsoSettings settings(&device);
+        Lab::CaptureDock dock(&settings); dock.resize(1500,800); dock.show();
+        auto collect=dock.findChild<QCheckBox*>("labCollectLog");
+        auto summary=dock.findChild<QLabel*>("labLogSummary"); auto list=dock.findChild<QListWidget*>();
+        QVERIFY(collect && summary && list);
+        for(auto checkbox:dock.findChildren<QCheckBox*>()) if(checkbox->text()=="Record history") checkbox->setChecked(false);
+        collect->setChecked(true);
+        auto frame=std::make_shared<PPresult>(1); frame->tag=1; frame->capturedAtMs=1000;
+        frame->modifiableData(0)->voltage={{0,1,0,-1,0},.001}; dock.ingest(frame);
+        QCOMPARE(list->count(),0); QVERIFY(summary->text().contains("1 / 10,000"));
+        dock.ingest(frame); QVERIFY(summary->text().contains("1 / 10,000"));
+        collect->setChecked(false); frame=std::make_shared<PPresult>(*frame);frame->tag=2;dock.ingest(frame);
+        QVERIFY(summary->text().contains("1 / 10,000"));
+        collect->setChecked(true); dock.ingest(frame); QVERIFY(summary->text().contains("1 / 10,000")); // Paused redraw is not new.
+        frame=std::make_shared<PPresult>(*frame);frame->tag=3;dock.ingest(frame); QVERIFY(summary->text().contains("2 / 10,000"));
+        QTimer::singleShot(0,[] {
+            auto dialog=qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            QVERIFY(dialog); dialog->button(QMessageBox::Cancel)->click();
+        });
+        QVERIFY(!dock.confirmDiscardLog()); QVERIFY(collect->isChecked());
+        QVERIFY(summary->text().contains("2 / 10,000"));
+        QTimer::singleShot(0,[] {
+            auto dialog=qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            QVERIFY(dialog); dialog->button(QMessageBox::Discard)->click();
+        });
+        dock.findChild<QPushButton*>("labClearLog")->click(); QVERIFY(summary->text().contains("0 / 10,000"));
+        QVERIFY(collect->isChecked()); QVERIFY(dock.confirmDiscardLog());
+    }
+    void workbenchVisualSmoke() {
+        ScopeDevice device; DsoSettings settings(&device);
+        Lab::CaptureDock dock(&settings); dock.resize(1450,850); dock.show();
+        auto frame=std::make_shared<PPresult>(2); frame->tag=1; frame->capturedAtMs=QDateTime::currentMSecsSinceEpoch();
+        for(unsigned channel=0;channel<2;++channel) {
+            auto *data=frame->modifiableData(channel); data->voltage.interval=1e-6;
+            for(int i=0;i<2000;++i) data->voltage.samples.push_back((channel?.7:1)*std::sin(2*M_PI*i/200+channel*.4));
+        }
+        dock.ingest(frame);
+        for(auto button:dock.findChildren<QPushButton*>()) if(button->text()=="Set reference") button->click();
+        dock.findChild<QCheckBox*>("labMaskEnabled")->setChecked(true);
+        dock.findChild<QCheckBox*>("labCollectLog")->setChecked(true);
+        for(unsigned tag=2;tag<=42;++tag) {
+            auto next=std::make_shared<PPresult>(*frame); next->tag=tag;next->capturedAtMs+=tag*100;
+            for(auto &sample:next->modifiableData(0)->voltage.samples) sample*=1+.006*tag;
+            dock.ingest(next);
+        }
+        dock.findChild<QTabWidget*>("labControls")->setCurrentIndex(2);
+        QCoreApplication::processEvents();
+        if(qEnvironmentVariableIsSet("OH_WORKBENCH_SCREENSHOT")) {
+            QVERIFY(dock.grab().save(qEnvironmentVariable("OH_WORKBENCH_SCREENSHOT")));
+            dock.findChild<QTabWidget*>("labControls")->setCurrentIndex(3);
+            dock.findChild<QTabWidget*>("labViews")->setCurrentIndex(1);
+            QCoreApplication::processEvents();
+            QVERIFY(dock.grab().save(qEnvironmentVariable("OH_WORKBENCH_SCREENSHOT")+".trend.png"));
+        }
+        dock.resize(1100,700); QCoreApplication::processEvents();
+        QVERIFY(dock.width()<=1100); QVERIFY(dock.height()<=700);
     }
     void captureBrowserMeasurementControls() {
         ScopeDevice device; DsoSettings settings(&device);
@@ -504,8 +678,23 @@ private slots:
         frame=std::make_shared<PPresult>(*frame); frame->tag=73; frame->capturedAtMs+=100;
         window.showNewData(frame);
         QVERIFY(dock->findChild<QTableWidget*>("labMeasurements")->item(0,0)->text().contains("8001 samples"));
+        window.resize(1650,1000);
         QTest::qWait(1500);
+        // A tiling window manager may override resize(); the application's minimum
+        // layout must still fit, independently of the window manager's allocation.
+        QVERIFY(window.minimumSizeHint().width()<=1650); QVERIFY(window.minimumSizeHint().height()<=1000);
         QVERIFY(window.grab().save(qEnvironmentVariable("OH_GUI_SCREENSHOT")));
+        dock->findChild<QCheckBox*>("labCollectLog")->setChecked(true);
+        frame=std::make_shared<PPresult>(*frame); frame->tag=74; frame->capturedAtMs+=100; window.showNewData(frame);
+        QTimer::singleShot(0,[] {
+            auto dialog=qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            QVERIFY(dialog); dialog->button(QMessageBox::Cancel)->click();
+        });
+        QVERIFY(!window.close()); QVERIFY(window.isVisible());
+        QTimer::singleShot(0,[] {
+            auto dialog=qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            QVERIFY(dialog); dialog->button(QMessageBox::Discard)->click();
+        });
         window.close();
     }
 };

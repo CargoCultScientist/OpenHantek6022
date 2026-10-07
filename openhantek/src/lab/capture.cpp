@@ -137,6 +137,16 @@ void CaptureHistory::clear() {records.clear(); used=0; skipped=0;}
 double timeOrigin(const Capture &capture, const CaptureChannel &ch, bool alignTrigger) {
     return alignTrigger && capture.triggered ? -capture.triggerPosition*ch.signal.interval : 0;
 }
+bool interpolatedSample(const SampleValues &signal, double time, double origin, double &value) {
+    if(signal.samples.size()<2 || !std::isfinite(signal.interval) || signal.interval<=0) return false;
+    double position=(time-origin)/signal.interval;
+    if(std::abs(position-std::round(position))<1e-9) position=std::round(position);
+    if(!std::isfinite(position)||position<0||position>double(signal.samples.size()-1)) return false;
+    const size_t left=std::min(size_t(position),signal.samples.size()-2);
+    const double fraction=position-left;
+    value=signal.samples[left]*(1-fraction)+signal.samples[left+1]*fraction;
+    return std::isfinite(value);
+}
 Difference compare(const Capture &current, const Capture &reference, size_t index, bool align, double offset, TimeSpan span) {
     Difference d;
     if(index>=current.channels.size()||index>=reference.channels.size()) {d.error="Missing reference channel"; return d;}
@@ -151,12 +161,9 @@ Difference compare(const Capture &current, const Capture &reference, size_t inde
     if(range.begin==range.end) {d.error="No samples in measurement span"; return d;}
     long double squares=0;
     for(size_t i=range.begin;i<range.end;++i) {
-        double position=(a0+i*a.signal.interval-b0)/b.signal.interval;
-        if(std::abs(position-std::round(position))<1e-9) position=std::round(position);
-        if(!std::isfinite(position)||position<0||position>double(b.signal.samples.size()-1)) continue;
-        const size_t left=std::min(size_t(position),b.signal.samples.size()-2);
-        const double fraction=position-left;
-        const double delta=a.signal.samples[i]-(b.signal.samples[left]*(1-fraction)+b.signal.samples[left+1]*fraction);
+        double expected=0;
+        if(!interpolatedSample(b.signal,a0+i*a.signal.interval,b0,expected)) continue;
+        const double delta=a.signal.samples[i]-expected;
         if(!std::isfinite(delta)) continue;
         squares+=static_cast<long double>(delta)*delta; d.maximum=std::max(d.maximum,std::abs(delta)); ++d.count;
     }
@@ -164,7 +171,7 @@ Difference compare(const Capture &current, const Capture &reference, size_t inde
     else d.rms=std::sqrt(double(squares/d.count));
     return d;
 }
-static QJsonObject statisticsSetup(const Capture &capture) {
+QJsonObject captureSetup(const Capture &capture) {
     QJsonArray channels;
     for(const auto &ch:capture.channels)
         channels.append(QJsonObject{{"unit",int(ch.unit)},{"interval",ch.signal.interval},
@@ -174,13 +181,13 @@ static QJsonObject statisticsSetup(const Capture &capture) {
     return {{"channels",channels},{"metadata",capture.metadata}};
 }
 bool CaptureStatistics::matches(const Capture &capture, TimeSpan span, bool align) const {
-    return initialized && setup==statisticsSetup(capture) && gate.start==span.start && gate.end==span.end && aligned==align;
+    return initialized && setup==captureSetup(capture) && gate.start==span.start && gate.end==span.end && aligned==align;
 }
 void CaptureStatistics::clear() {channels={}; setup={}; initialized=false;}
 void CaptureStatistics::add(const Capture &capture, TimeSpan span, bool align) {
     if(initialized && capture.tag==lastTag && capture.capturedAtMs==lastTime) return;
     if(!matches(capture,span,align)) clear();
-    setup=statisticsSetup(capture); gate=span; aligned=align; initialized=true;
+    setup=captureSetup(capture); gate=span; aligned=align; initialized=true;
     lastTag=capture.tag; lastTime=capture.capturedAtMs;
     for(size_t c=0;c<std::min(channels.size(),capture.channels.size());++c) {
         const auto &ch=capture.channels[c];
