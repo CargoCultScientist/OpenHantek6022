@@ -80,7 +80,9 @@ bool DsoSettings::saveToFile( const QString &filename ) {
     storeSettings.swap( local ); // switch to requested filename
     const auto oldVersion = configVersion;
     configVersion = CONFIG_VERSION; // Save As always writes a usable setup, even after "defaults next time".
+    explicitFileSave = true;
     save();                      // store the settings
+    explicitFileSave = false;
     configVersion = oldVersion;
     storeSettings->sync();
     const bool saved = storeSettings->status() == QSettings::NoError;
@@ -124,6 +126,7 @@ void DsoSettings::load() {
         const bool existing = !storeSettings->allKeys().isEmpty();
         setDefaultConfig();
         if ( existing ) {
+            protectedSettingsFile = storeSettings->fileName();
             alwaysSave = false; // preserve an unsupported device file on exit as well as on load
             qWarning() << "Unsupported settings version; automatic saving disabled:" << storeSettings->fileName();
         }
@@ -349,6 +352,10 @@ void DsoSettings::load() {
 // save the persistent scope settings
 // called by "DsoSettings::saveToFile()", "MainWindow::closeEvent" and explicitly by "ui->actionSave"
 void DsoSettings::save() {
+    if (!explicitFileSave && storeSettings->fileName() == protectedSettingsFile) {
+        qWarning() << "Preserving unsupported device settings. Use Save As to replace them explicitly:" << protectedSettingsFile;
+        return;
+    }
     // Use default configuration after restart?
     if ( 0 == configVersion ) {
         storeSettings->clear();

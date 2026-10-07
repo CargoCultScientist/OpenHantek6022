@@ -12,5 +12,6 @@ const int DemoDeviceID = 0xDEDE;
 struct ModelDEMO : public DSOModel {
     static const int ID = DemoDeviceID;
     ModelDEMO();
+    static ModelDEMO &instance();
     void applyRequirements( HantekDsoControl *dsoControl ) const override;
 };

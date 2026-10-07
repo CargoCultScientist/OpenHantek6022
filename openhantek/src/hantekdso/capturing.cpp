@@ -71,6 +71,7 @@ void CapturingThread::xferSamples() {
 void CapturingThread::capture() {
     if ( !hdc->samplingStarted )
         return;
+    armGeneration = hdc->singleCapture.current(); // Includes command application in the acquisition generation.
     QReadLocker deviceLocker( &hdc->scopeDeviceLock );
     ScopeDevice *device = hdc->scopeDevice;
     if ( !device || hdc->deviceConnectionState != HantekDsoControl::DeviceConnectionState::Connected || !device->isConnected() )
@@ -158,7 +159,6 @@ void CapturingThread::capture() {
         xferSamples();
     if ( 0 == ++tag )
         ++tag; // skip tag==0
-    armGeneration = hdc->singleCapture.current();
     if ( device->isRealHW() ) {
         received = getRealSamples( device );
     } else {

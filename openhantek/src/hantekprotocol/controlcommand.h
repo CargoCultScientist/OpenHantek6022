@@ -15,6 +15,7 @@ class ControlCommand : public std::vector< uint8_t > {
     ControlCommand( Hantek::ControlCode code, unsigned size );
 
   public:
+    virtual ~ControlCommand() = default;
     bool pending = false;
     uint8_t code;
     uint8_t value = 0;

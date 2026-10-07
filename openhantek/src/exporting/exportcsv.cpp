@@ -64,7 +64,9 @@ void ExporterCSV::fillHeaders( QTextStream &csvStream, const ExporterData &dto, 
     // Channels
     for ( ChannelID channel = 0; channel < dto.getChannelsCount(); ++channel ) {
         if ( voltageData[ channel ] != nullptr ) {
-            csvStream << sep << csvName(registry->settings->scope.voltage[channel].name + " / V");
+            const auto unit=data->data(channel)->voltageUnit;
+            const QString symbol=unit==UNIT_VOLTSQUARE?QString::fromUtf8("V²"):unit==UNIT_WATTS?QString("W"):QString("V");
+            csvStream << sep << csvName(registry->settings->scope.voltage[channel].name + " / " + symbol);
         }
     }
 

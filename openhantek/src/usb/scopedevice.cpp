@@ -62,7 +62,7 @@ ScopeDevice::ScopeDevice( DSOModel *model, libusb_device *device, unsigned findI
 }
 
 
-ScopeDevice::ScopeDevice() : model( new ModelDEMO ), device( nullptr ), uniqueUSBdeviceID( 0 ), realHW( false ) {}
+ScopeDevice::ScopeDevice() : model( &ModelDEMO::instance() ), device( nullptr ), uniqueUSBdeviceID( 0 ), realHW( false ) {}
 
 
 bool ScopeDevice::connectDevice( QString &errorMessage ) {
@@ -122,7 +122,6 @@ ScopeDevice::~ScopeDevice() {
     if ( device != nullptr )
         libusb_unref_device( device );
     device = nullptr;
-    if (!realHW) delete model; // Demo devices own their model; hardware models belong to the registry.
 }
 
 

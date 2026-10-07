@@ -16,6 +16,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSet>
 #include <algorithm>
 
 ExporterJSON::ExporterJSON() {}
@@ -51,6 +52,21 @@ void ExporterJSON::fillData( QTextStream &jsonStream, const ExporterData &dto ) 
     std::vector< const SampleValues * > voltageData = dto.getVoltageData();
     std::vector< const SampleValues * > spectrumData = dto.getSpectrumData();
 
+    // Channel names are user-editable: they must not overwrite axes or one another.
+    QSet<QString> usedNames {"time", "freq"};
+    QStringList voltageNames, spectrumNames;
+    auto uniqueName=[&usedNames](QString name) {
+        const auto base=name.isEmpty()?QString("channel"):name;
+        name=base;
+        int suffix=2;
+        while(usedNames.contains(name)) name=base+" ("+QString::number(suffix++)+")";
+        usedNames.insert(name); return name;
+    };
+    for(ChannelID ch=0;ch<dto.getChannelsCount();++ch) {
+        voltageNames.append(voltageData[ch]?uniqueName(registry->settings->scope.voltage[ch].name):QString());
+        spectrumNames.append(spectrumData[ch]?uniqueName(registry->settings->scope.spectrum[ch].name):QString());
+    }
+
     QJsonArray rows;
     for ( unsigned int row = 0; row < dto.getMaxRow(); ++row ) {
         QJsonObject object;
@@ -60,7 +76,7 @@ void ExporterJSON::fillData( QTextStream &jsonStream, const ExporterData &dto ) 
         object["time"] = hasTime ? QJsonValue(dto.getTimeInterval() * row) : QJsonValue();
         for ( ChannelID channel = 0; channel < dto.getChannelsCount(); ++channel )
             if ( voltageData[ channel ] != nullptr ) {
-                object[registry->settings->scope.voltage[channel].name] = row < voltageData[channel]->samples.size()
+                object[voltageNames[channel]] = row < voltageData[channel]->samples.size()
                     ? QJsonValue(voltageData[channel]->samples[row]) : QJsonValue();
             }
         if ( dto.isSpectrumUsed() ) {
@@ -70,7 +86,7 @@ void ExporterJSON::fillData( QTextStream &jsonStream, const ExporterData &dto ) 
             object["freq"] = hasFrequency ? QJsonValue(dto.getFreqInterval() * row) : QJsonValue();
             for ( ChannelID channel = 0; channel < dto.getChannelsCount(); ++channel ) {
                 if ( spectrumData[ channel ] != nullptr ) {
-                    object[registry->settings->scope.spectrum[channel].name] = row < spectrumData[channel]->samples.size()
+                    object[spectrumNames[channel]] = row < spectrumData[channel]->samples.size()
                         ? QJsonValue(spectrumData[channel]->samples[row]) : QJsonValue();
                 }
             }

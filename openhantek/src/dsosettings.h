@@ -50,4 +50,6 @@ class DsoSettings {
     void setDefaultConfig();
     int verboseLevel = 0;
     bool resetSettings = false;
+    QString protectedSettingsFile;
+    bool explicitFileSave = false;
 };

@@ -13,6 +13,7 @@
 using namespace Hantek;
 
 static ModelDEMO modelInstance_DEMO;
+ModelDEMO &ModelDEMO::instance() { return modelInstance_DEMO; }
 
 static void initSpecifications( Dso::ControlSpecification &specification ) {
     // we drop 2K + 480 sample values due to unreliable start of stream
