@@ -11,6 +11,8 @@
 #include <QDebug>
 #include <QObject>
 #include <QThread>
+#include <QMutex>
+#include <atomic>
 
 /**
  * Manages all post processing processors. Register another processor with `registerProcessor(p)`.
@@ -40,7 +42,10 @@ class PostProcessing : public QObject {
     ///
     std::unique_ptr< PPresult > currentData;
     static void convertData( const DSOsamples *source, PPresult *destination );
-    bool processing = true;
+    std::atomic<bool> processing {true};
+    QMutex pendingMutex;
+    std::shared_ptr<const DSOsamples> pending;
+    bool drainScheduled=false;
     int verboseLevel = 0;
 
   public slots:
@@ -50,6 +55,8 @@ class PostProcessing : public QObject {
      * @param data
      */
     void input( std::shared_ptr<const DSOsamples> data );
+    // Thread-safe bounded mailbox: one pending acquisition, newest wins.
+    void enqueue( std::shared_ptr<const DSOsamples> data );
 
   signals:
     void rawSamplesReady( std::shared_ptr< PPresult > result );

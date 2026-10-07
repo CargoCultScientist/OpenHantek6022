@@ -10,6 +10,22 @@ PostProcessing::PostProcessing( ChannelID channelCount, int verboseLevel )
 
 void PostProcessing::registerProcessor( Processor *processor ) { processors.push_back( processor ); }
 
+void PostProcessing::enqueue(std::shared_ptr<const DSOsamples> data) {
+    QMutexLocker locker(&pendingMutex);
+    if(!processing) return;
+    pending=std::move(data);
+    if(drainScheduled) return;
+    drainScheduled=true;
+    QMetaObject::invokeMethod(this,[this] {
+        std::shared_ptr<const DSOsamples> next;
+        {
+            QMutexLocker lock(&pendingMutex);
+            next=std::move(pending); drainScheduled=false;
+        }
+        input(std::move(next));
+    },Qt::QueuedConnection);
+}
+
 
 // static
 void PostProcessing::convertData( const DSOsamples *source, PPresult *destination ) {

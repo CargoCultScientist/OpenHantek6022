@@ -21,6 +21,7 @@ class TriggerDock;
 class SpectrumDock;
 class VoltageDock;
 class QAction;
+namespace Lab { class CaptureDock; }
 
 namespace Ui {
 class MainWindow;
@@ -56,6 +57,7 @@ class MainWindow : public QMainWindow {
 
     // Central widgets
     DsoWidget *dsoWidget;
+    Lab::CaptureDock *captureDock;
 
     // Settings used for the whole program
     DsoSettings *dsoSettings;

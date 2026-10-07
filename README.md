@@ -1,4 +1,12 @@
-# OpenHantek6022
+# OpenHantek Lab (experimental fork)
+
+This fork adds a correctness baseline, bounded capture history, reference comparison
+and full-record measurements. See [LAB.md](LAB.md) for build/run instructions, tests,
+safety boundaries and the capture format. The installed upstream app is not replaced.
+
+The original OpenHantek6022 documentation follows below.
+
+## OpenHantek6022
 [![GitHub CI](https://github.com/OpenHantek/OpenHantek6022/actions/workflows/build.yml/badge.svg)](https://github.com/OpenHantek/OpenHantek6022/actions/workflows/build.yml)
 [![Stability: Active](https://masterminds.github.io/stability/active.svg)](https://masterminds.github.io/stability/active.html)
 [![Downloads total](https://img.shields.io/github/downloads/OpenHantek/OpenHantek6022/total?color=blue)](https://github.com/OpenHantek/OpenHantek6022/releases)
@@ -279,4 +287,3 @@ If you are lucky enough to live in peace, please [**donate**](https://www.icrc.o
 to the *International Committee of the Red Cross*.
 
 ![blue-yellow](docs/images/blue-yellow.png)
-

@@ -444,7 +444,8 @@ int main( int argc, char *argv[] ) {
     postProcessing.registerProcessor( &graphGenerator );
 
     postProcessing.moveToThread( &postProcessingThread );
-    QObject::connect( &dsoControl, &HantekDsoControl::samplesAvailable, &postProcessing, &PostProcessing::input );
+    QObject::connect( &dsoControl, &HantekDsoControl::samplesAvailable, &postProcessing, &PostProcessing::enqueue,
+                      Qt::DirectConnection ); // enqueue is a bounded, thread-safe mailbox, not analysis work.
     QObject::connect(&postProcessing, &PostProcessing::rawSamplesReady, &exportRegistry,
                      &ExporterRegistry::inputRaw, Qt::QueuedConnection);
     QObject::connect( &postProcessing, &PostProcessing::processingFinished, &exportRegistry, &ExporterRegistry::input,

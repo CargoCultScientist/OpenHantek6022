@@ -21,6 +21,7 @@
 #include "viewconstants.h"
 
 #include "dsosettings.h"
+#include "lab/capturedock.h"
 
 #include <QDesktopServices>
 #include <QDir>
@@ -216,6 +217,13 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     addDockWidget( Qt::RightDockWidgetArea, horizontalDock );
     addDockWidget( Qt::RightDockWidgetArea, triggerDock );
     addDockWidget( Qt::RightDockWidgetArea, spectrumDock );
+
+    captureDock = new Lab::CaptureDock(dsoSettings, this);
+    addDockWidget(Qt::BottomDockWidgetArea, captureDock);
+    captureDock->hide();
+    auto captureAction=captureDock->toggleViewAction();
+    captureAction->setShortcut(QKeySequence("Ctrl+H"));
+    ui->menuView->addAction(captureAction);
 
     restoreGeometry( dsoSettings->mainWindowGeometry );
     restoreState( dsoSettings->mainWindowState );
@@ -564,6 +572,7 @@ void MainWindow::showNewData( std::shared_ptr< PPresult > newData ) {
     if ( dsoSettings->scope.verboseLevel > 5 )
         qDebug() << "     MainWindow::showNewData()" << newData->tag;
     dsoWidget->showNew( newData );
+    captureDock->ingest(newData);
 }
 
 
