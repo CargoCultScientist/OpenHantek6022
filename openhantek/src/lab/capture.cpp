@@ -135,9 +135,9 @@ bool CaptureHistory::append(std::shared_ptr<const Capture> frame) {
 }
 void CaptureHistory::clear() {records.clear(); used=0; skipped=0;}
 double timeOrigin(const Capture &capture, const CaptureChannel &ch, bool alignTrigger) {
-    return alignTrigger ? -capture.triggerPosition*ch.signal.interval : 0;
+    return alignTrigger && capture.triggered ? -capture.triggerPosition*ch.signal.interval : 0;
 }
-Difference compare(const Capture &current, const Capture &reference, size_t index, bool align, double offset) {
+Difference compare(const Capture &current, const Capture &reference, size_t index, bool align, double offset, TimeSpan span) {
     Difference d;
     if(index>=current.channels.size()||index>=reference.channels.size()) {d.error="Missing reference channel"; return d;}
     const auto &a=current.channels[index]; const auto &b=reference.channels[index];
@@ -147,8 +147,10 @@ Difference compare(const Capture &current, const Capture &reference, size_t inde
     }
     if(align && (!current.triggered||!reference.triggered)) {d.error="Both records must have a trigger"; return d;}
     const double a0=timeOrigin(current,a,align), b0=timeOrigin(reference,b,align)+offset;
+    const auto range=sampleRange(a.signal.samples.size(),a.signal.interval,a0,span);
+    if(range.begin==range.end) {d.error="No samples in measurement span"; return d;}
     long double squares=0;
-    for(size_t i=0;i<a.signal.samples.size();++i) {
+    for(size_t i=range.begin;i<range.end;++i) {
         double position=(a0+i*a.signal.interval-b0)/b.signal.interval;
         if(std::abs(position-std::round(position))<1e-9) position=std::round(position);
         if(!std::isfinite(position)||position<0||position>double(b.signal.samples.size()-1)) continue;
@@ -161,5 +163,31 @@ Difference compare(const Capture &current, const Capture &reference, size_t inde
     if(!d.count) d.error="No time overlap";
     else d.rms=std::sqrt(double(squares/d.count));
     return d;
+}
+static QJsonObject statisticsSetup(const Capture &capture) {
+    QJsonArray channels;
+    for(const auto &ch:capture.channels)
+        channels.append(QJsonObject{{"unit",int(ch.unit)},{"interval",ch.signal.interval},
+            {"count",double(ch.signal.samples.size())},{"name",ch.name}});
+    // Include every channel's settings: math can depend on both physical inputs.
+    // Metadata is explicitly receipt-time context, not atomic hardware provenance.
+    return {{"channels",channels},{"metadata",capture.metadata}};
+}
+bool CaptureStatistics::matches(const Capture &capture, TimeSpan span, bool align) const {
+    return initialized && setup==statisticsSetup(capture) && gate.start==span.start && gate.end==span.end && aligned==align;
+}
+void CaptureStatistics::clear() {channels={}; setup={}; initialized=false;}
+void CaptureStatistics::add(const Capture &capture, TimeSpan span, bool align) {
+    if(initialized && capture.tag==lastTag && capture.capturedAtMs==lastTime) return;
+    if(!matches(capture,span,align)) clear();
+    setup=statisticsSetup(capture); gate=span; aligned=align; initialized=true;
+    lastTag=capture.tag; lastTime=capture.capturedAtMs;
+    for(size_t c=0;c<std::min(channels.size(),capture.channels.size());++c) {
+        const auto &ch=capture.channels[c];
+        if(!ch.valid) continue;
+        const auto range=sampleRange(ch.signal.samples.size(),ch.signal.interval,timeOrigin(capture,ch,align),span);
+        const auto m=measure(ch.signal.samples,ch.signal.interval,true,range);
+        channels[c].vpp.add(m.vpp); channels[c].rms.add(m.rms); channels[c].frequency.add(m.frequency);
+    }
 }
 }

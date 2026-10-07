@@ -10,6 +10,7 @@ class QLabel;
 class QTableWidget;
 class QCheckBox;
 class QDoubleSpinBox;
+class QComboBox;
 class DsoSettings;
 namespace Lab {
 class CapturePlot;
@@ -22,13 +23,16 @@ private:
     const DsoSettings *settings;
     CaptureHistory history;
     std::shared_ptr<const Capture> selected, reference;
-    std::array<RunningStatistic,3> vppStatistics;
+    CaptureStatistics statistics;
     QListWidget *list;
     CapturePlot *plot;
     QLabel *status;
     QTableWidget *measurements;
-    QCheckBox *live, *record, *align;
-    QDoubleSpinBox *offset;
+    QCheckBox *live, *record, *align, *details;
+    QDoubleSpinBox *offset, *cursorA, *cursorB;
+    QComboBox *spanMode, *statisticMetric;
+    TimeSpan measurementSpan() const;
+    void resetStatistics();
     void refreshList();
     void refresh();
     void saveCapture();

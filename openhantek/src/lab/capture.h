@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 #include "post/ppresult.h"
+#include "measurements.h"
 #include <QJsonObject>
 #include <QStringList>
 #include <deque>
 #include <memory>
+#include <array>
 
 class DsoSettings;
 namespace Lab {
@@ -42,6 +44,24 @@ private:
 struct Difference { size_t count=0; double rms=0, maximum=0; QString error; };
 // Reference time is shifted by offset. Interpolation is linear and only within
 // overlap; no extrapolation or automatic phase fitting hides actual differences.
-Difference compare(const Capture &, const Capture &, size_t channel, bool alignTrigger, double offset=0);
+Difference compare(const Capture &, const Capture &, size_t channel, bool alignTrigger, double offset=0, TimeSpan span={});
 double timeOrigin(const Capture &, const CaptureChannel &, bool alignTrigger);
+struct ChannelStatistics {
+    RunningStatistic vpp, rms, frequency;
+};
+// Statistics cover newly recorded frames only, never history navigation. A change
+// in units, receipt-time setup, sample grid or measurement gate starts a new run.
+class CaptureStatistics {
+public:
+    std::array<ChannelStatistics,3> channels;
+    void add(const Capture &, TimeSpan span={}, bool alignTrigger=false);
+    bool matches(const Capture &, TimeSpan span={}, bool alignTrigger=false) const;
+    void clear();
+private:
+    QJsonObject setup;
+    TimeSpan gate;
+    bool initialized=false, aligned=false;
+    unsigned lastTag=0;
+    qint64 lastTime=0;
+};
 }

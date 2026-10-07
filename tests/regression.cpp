@@ -26,6 +26,9 @@
 #include <QTableWidget>
 #include <QPushButton>
 #include <QCheckBox>
+#include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QWheelEvent>
 
 int verboseLevel = 0;
 
@@ -249,6 +252,8 @@ private slots:
         QVERIFY(std::abs(m.frequency-10000)<1e-8);
         QVERIFY(std::abs(m.duty-.25)<1e-12);
         QVERIFY(std::abs(m.positiveWidth-25e-6)<1e-12);
+        QVERIFY(std::abs(m.negativeWidth-75e-6)<1e-12);
+        QVERIFY(std::abs(m.negativeDuty-.75)<1e-12);
         QVERIFY(!std::isfinite(m.rise)); QVERIFY(m.undersampled);
         for(auto &v:square) v=2;
         m=Lab::measure(square,dt);
@@ -257,6 +262,69 @@ private slots:
         QCOMPARE(Lab::measure(square,dt).count,size_t(0));
         Lab::RunningStatistic stats; stats.add(1);stats.add(2);stats.add(3);stats.add(Lab::unavailable);
         QCOMPARE(stats.count,size_t(3)); QCOMPARE(stats.mean,2.); QCOMPARE(stats.deviation(),1.);
+    }
+    void measurementSpansAndCycles() {
+        auto range=Lab::sampleRange(1001,.001,-.3,{-.2,-.1});
+        QCOMPARE(range.begin,size_t(100)); QCOMPARE(range.end,size_t(201));
+        range=Lab::sampleRange(1001,.001,0,{.20001,.39999});
+        QCOMPARE(range.begin,size_t(201)); QCOMPARE(range.end,size_t(400));
+        range=Lab::sampleRange(1001,.001,0,{.2,.2});
+        QCOMPARE(range.begin,size_t(200)); QCOMPARE(range.end,size_t(201));
+        for(const auto span:{Lab::TimeSpan{2,3},Lab::TimeSpan{-3,-2},Lab::TimeSpan{.4,.2},Lab::TimeSpan{Lab::unavailable,1}}) {
+            range=Lab::sampleRange(1001,.001,0,span); QCOMPARE(range.begin,range.end);
+        }
+        range=Lab::sampleRange(1001,.001,0); QCOMPARE(range.begin,size_t(0)); QCOMPARE(range.end,size_t(1001));
+        std::vector<double> ramp;
+        for(int i=0;i<1001;++i) ramp.push_back(i);
+        ramp[0]=Lab::unavailable; // An invalid sample outside the gate cannot contaminate it.
+        range=Lab::sampleRange(ramp.size(),.001,0,{.2,.4});
+        auto m=Lab::measure(ramp,.001,true,range);
+        QCOMPARE(m.count,size_t(201)); QCOMPARE(m.minimum,200.); QCOMPARE(m.maximum,400.);
+        QCOMPARE(m.mean,300.); QCOMPARE(m.vpp,200.); QCOMPARE(m.span,.2);
+        m=Lab::measure(ramp,.001,true,{200,201});
+        QCOMPARE(m.count,size_t(1)); QCOMPARE(m.mean,200.); QCOMPARE(m.span,0.); QVERIFY(!std::isfinite(m.frequency));
+        QCOMPARE(Lab::measure(ramp,.001,true,{5000,6000}).count,size_t(0));
+        std::vector<double> sine;
+        for(int i=0;i<3503;++i) sine.push_back(1+2*std::sin(2*M_PI*i/1000));
+        m=Lab::measure(sine,1e-6);
+        QCOMPARE(m.cycles,size_t(2)); QVERIFY(std::abs(m.cycleMean-1)<1e-12);
+        QVERIFY(std::abs(m.cycleRms-std::sqrt(3))<1e-5);
+        QVERIFY(std::abs(m.cycleSpan-.002)<1e-12);
+        QVERIFY(std::abs(m.mean-m.cycleMean)>.1); // Partial cycles affect record mean, not cycle mean.
+        QVERIFY(!std::isfinite(Lab::measure(sine,1e-6,false).cycleRms));
+        QVERIFY(!std::isfinite(Lab::measure(sine,1e-6,true,{0,100}).cycleRms));
+        // A piecewise-linear triangle has an exact analytic cycle RMS.
+        std::vector<double> triangle;
+        for(int i=0;i<350;++i) triangle.push_back(2-std::abs(i%100-50)/25.);
+        m=Lab::measure(triangle,.001);
+        QVERIFY(std::abs(m.cycleMean-1)<1e-12);
+        QVERIFY(std::abs(m.cycleRms-std::sqrt(4./3))<1e-12);
+        QCOMPARE(Lab::measure({2,2,2},.1).crestFactor,1.);
+        QVERIFY(!std::isfinite(Lab::measure({0,0,0},.1).crestFactor));
+    }
+    void statisticsResetAndUnits() {
+        Lab::Capture frame; frame.tag=1; frame.capturedAtMs=100;
+        frame.channels.push_back({"A",UNIT_VOLTS,{{0,1,2,3,4},1},true});
+        Lab::CaptureStatistics stats;
+        stats.add(frame); stats.add(frame);
+        QCOMPARE(stats.channels[0].vpp.count,size_t(1));
+        ++frame.tag; frame.channels[0].signal.samples={0,2,4,6,8}; stats.add(frame);
+        QCOMPARE(stats.channels[0].vpp.count,size_t(2)); QCOMPARE(stats.channels[0].vpp.mean,6.);
+        QCOMPARE(stats.channels[0].vpp.minimum,4.); QCOMPARE(stats.channels[0].vpp.maximum,8.);
+        auto old=frame;
+        ++frame.tag; frame.channels[0].unit=UNIT_VOLTSQUARE; stats.add(frame);
+        QCOMPARE(stats.channels[0].vpp.count,size_t(1)); QVERIFY(!stats.matches(old));
+        // A different math operation can have the same unit: its metadata must also reset the run.
+        ++frame.tag; frame.metadata={{"channelSettings",QJsonArray{QJsonObject{{"couplingOrMathIndex",2}}}}}; stats.add(frame);
+        QCOMPARE(stats.channels[0].vpp.count,size_t(1));
+        ++frame.tag; frame.channels[0].valid=false; stats.add(frame);
+        QCOMPARE(stats.channels[0].vpp.count,size_t(1));
+        ++frame.tag; frame.channels[0].valid=true; stats.add(frame,{1,3});
+        QCOMPARE(stats.channels[0].vpp.count,size_t(1)); QCOMPARE(stats.channels[0].vpp.mean,4.);
+        QVERIFY(stats.matches(frame,{1,3})); QVERIFY(!stats.matches(frame));
+        ++frame.tag; frame.channels[0].signal.interval=.5; stats.add(frame,{1,3});
+        QCOMPARE(stats.channels[0].vpp.count,size_t(1));
+        stats.clear(); QCOMPARE(stats.channels[0].vpp.count,size_t(0)); QVERIFY(!stats.matches(frame,{1,3}));
     }
     void fftOddLastBinAndTinyWindow() {
         ScopeDevice device;DsoSettings settings(&device);
@@ -317,6 +385,10 @@ private slots:
         b.channels.push_back({"B",UNIT_VOLTS,{{0,2,4},2},true});
         auto d=Lab::compare(a,b,0,false);
         QCOMPARE(d.count,size_t(5));QCOMPARE(d.rms,1.);QCOMPARE(d.maximum,1.);
+        d=Lab::compare(a,b,0,false,0,{1,3});
+        QCOMPARE(d.count,size_t(3));QCOMPARE(d.rms,1.);
+        d=Lab::compare(a,b,0,false,0,{100,200});
+        QCOMPARE(d.count,size_t(0));QVERIFY(d.error.contains("span"));
         d=Lab::compare(a,b,0,true);QVERIFY(!d.error.isEmpty());
         d=Lab::compare(a,b,0,false,10);QCOMPARE(d.count,size_t(0));
         b.channels[0].unit=UNIT_VOLTSQUARE;
@@ -358,6 +430,49 @@ private slots:
             QVERIFY(dock.grab().save(qEnvironmentVariable("OH_CAPTURE_SCREENSHOT")));
         }
     }
+    void captureBrowserMeasurementControls() {
+        ScopeDevice device; DsoSettings settings(&device);
+        Lab::CaptureDock dock(&settings); dock.resize(1500,800); dock.show();
+        auto frame=std::make_shared<PPresult>(1); frame->tag=1; frame->capturedAtMs=100;
+        auto data=frame->modifiableData(0); data->voltage.interval=1e-6;
+        for(int i=0;i<1000;++i) data->voltage.samples.push_back(i);
+        dock.ingest(frame);
+        auto mode=dock.findChild<QComboBox*>("labMeasurementSpan");
+        auto a=dock.findChild<QDoubleSpinBox*>("labCursorA"); auto b=dock.findChild<QDoubleSpinBox*>("labCursorB");
+        auto table=dock.findChild<QTableWidget*>("labMeasurements");
+        auto plot=dock.findChild<QWidget*>("labCapturePlot");
+        auto reset=dock.findChild<QPushButton*>("labResetStatistics");
+        QVERIFY(mode && a && b && table && plot && reset);
+        QVERIFY(table->item(0,12)->text().contains("n=1"));
+        for(auto button:dock.findChildren<QPushButton*>()) if(button->text()=="Set reference") button->click();
+        frame=std::make_shared<PPresult>(*frame); frame->tag=2;
+        frame->modifiableData(0)->voltage.samples[0]=9999; // Difference entirely outside the cursor gate.
+        dock.ingest(frame); QVERIFY(table->item(0,12)->text().contains("n=2"));
+        a->setValue(.0002); b->setValue(.0001); mode->setCurrentIndex(2); // Reversed cursors are accepted.
+        QVERIFY(a->isEnabled()); QVERIFY(table->item(0,0)->text().contains("101 samples"));
+        QCOMPARE(stringToValue(table->item(0,1)->text(),UNIT_VOLTS),100.);
+        QCOMPARE(stringToValue(table->item(0,2)->text(),UNIT_VOLTS),150.);
+        QCOMPARE(stringToValue(table->item(0,9)->text(),UNIT_VOLTS),0.);
+        QVERIFY(!table->item(0,12)->text().contains("n=2"));
+        frame=std::make_shared<PPresult>(*frame); frame->tag=3; dock.ingest(frame);
+        QVERIFY(table->item(0,12)->text().contains("n=1"));
+        auto list=dock.findChild<QListWidget*>(); list->setCurrentRow(0); list->setCurrentRow(2);
+        QVERIFY(table->item(0,12)->text().contains("n=1"));
+        reset->click(); QVERIFY(!table->item(0,12)->text().contains("n=1"));
+        QCOMPARE(list->count(),3); // Reset does not clear history or the reference.
+        QCOMPARE(stringToValue(table->item(0,9)->text(),UNIT_VOLTS),0.);
+        mode->setCurrentIndex(1); QCoreApplication::processEvents();
+        QVERIFY(!a->isEnabled()); QVERIFY(table->item(0,0)->text().contains("1000 samples"));
+        const QPointF centre=plot->rect().center();
+        QWheelEvent wheel(centre,plot->mapToGlobal(centre.toPoint()),QPoint(),QPoint(0,1200),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);
+        QCoreApplication::sendEvent(plot,&wheel);
+        QVERIFY(!table->item(0,0)->text().contains("1000 samples"));
+        mode->setCurrentIndex(0); QVERIFY(table->item(0,0)->text().contains("1000 samples"));
+        // Place a cursor from the plot and check that cursor mode is selected.
+        QTest::mouseClick(plot,Qt::LeftButton,Qt::ShiftModifier,centre.toPoint());
+        QCOMPARE(mode->currentIndex(),2); QVERIFY(a->value()>0);
+        a->setValue(2);b->setValue(3); QVERIFY(table->item(0,11)->text().contains("No finite samples"));
+    }
     void integratedGuiSmoke() {
         if(!qEnvironmentVariableIsSet("OH_GUI_SCREENSHOT")) QSKIP("Requires a real OpenGL display; run explicitly with OH_GUI_SCREENSHOT");
         QVERIFY(!GlScope::getOpenGLversion().isEmpty());
@@ -383,6 +498,12 @@ private slots:
         for(auto &sample:frame->modifiableData(0)->voltage.samples) sample+=.08;
         static_cast<Processor&>(spectrum).process(frame.get());static_cast<Processor&>(graphs).process(frame.get());
         window.showNewData(frame);
+        dock->findChild<QDoubleSpinBox*>("labCursorA")->setValue(.004);
+        dock->findChild<QDoubleSpinBox*>("labCursorB")->setValue(.012);
+        dock->findChild<QComboBox*>("labMeasurementSpan")->setCurrentIndex(2);
+        frame=std::make_shared<PPresult>(*frame); frame->tag=73; frame->capturedAtMs+=100;
+        window.showNewData(frame);
+        QVERIFY(dock->findChild<QTableWidget*>("labMeasurements")->item(0,0)->text().contains("8001 samples"));
         QTest::qWait(1500);
         QVERIFY(window.grab().save(qEnvironmentVariable("OH_GUI_SCREENSHOT")));
         window.close();

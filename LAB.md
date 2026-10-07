@@ -46,8 +46,9 @@ need bench validation. The existing acquisition/display pipeline is not gapless.
 ## Capture history, reference comparison and measurements
 
 The correctness-only release is on the fork's `main` branch. The additions below
-are on `feature/correctness-and-captures`; they are not silently bundled into the
-correctness-only release candidate.
+started on `feature/correctness-and-captures`. The next development slice is on
+`feature/measurement-spans`, based on that branch; neither is silently bundled into
+the correctness-only release candidate.
 
 Open **View → Capture history & measurements** (`Ctrl+H`). The scope above remains
 live when selecting a historical record below. **Follow latest** returns the browser
@@ -63,17 +64,17 @@ the scope. Clear history also resets the statistics; a pinned reference survives
   starts. Trigger alignment requires both captures to be triggered. A manual shift
   moves the reference in seconds. Differences use linear interpolation within overlap,
   never extrapolation or automatic phase fitting. No anti-alias resampling is performed.
-  Scroll over the plot to zoom, drag to pan, and double-click to reset. Measurements
-  remain full-record while zooming; zoom changes only the comparison view.
-- Measurements use the full record: min/max-derived peak-to-peak, mean, RMS, interpolated
-  period/frequency, positive duty/width and 10–90% rise/90–10% fall times. Timing uses
+  Scroll over the plot to zoom, drag to pan, and double-click to reset. In the default
+  Whole record mode, zoom changes only the view. See measurement spans below.
+- Measurements include min/max-derived peak-to-peak, mean, RMS, interpolated
+  period/frequency, positive and negative duty/width and 10–90% rise/90–10% fall times. Timing uses
   5% peak-to-peak hysteresis and median complete cycles. It is an estimate, not a
   calibrated bandwidth correction or an IEEE 181 top/base implementation. Rise/fall
   below two sample intervals and periods below ten samples are withheld. Clipped and
   irregular records are flagged. DC/insufficient cycles show a dash, not 0 Hz.
-- Vpp statistics cover recorded, unclipped displayed acquisitions since Clear history;
-  repeated redraws of the same acquisition do not contribute. They do not describe
-  unsampled time or missing acquisitions. Clear history when changing signal setup.
+- Live statistics cover recorded, unclipped displayed acquisitions, not unsampled
+  time or missing acquisitions. Repeated redraws and history navigation do not
+  contribute. See statistics reset rules below.
 - Analysis has a one-pending-record mailbox: newest wins under overload. Skipped
   acquisition tags are reported in the browser, but cannot detect USB-internal loss.
 
@@ -81,6 +82,53 @@ the scope. Clear history also resets the statistics; a pinned reference survives
 channel units and clipping flags. Open works in demo mode without a device. This
 initial format is `.ohl.json`, deliberately not the proposed ZIP/NumPy `.ohcap` format.
 See [the format specification](docs/lab-capture-format.md).
+
+### Measurement spans and expanded readings
+
+The **Measure** selector applies one time gate to every reading in the capture
+browser, including reference differences and live statistics:
+
+- **Whole record** (default): all retained samples, independent of zoom.
+- **Visible window**: only sample centres inside the browser's visible time axis.
+  Wheel zoom and drag pan change the gate. This is the capture-browser window, not
+  the legacy oscilloscope view above it.
+- **Between cursors**: enter A/B in seconds, or Shift-click to place A and Ctrl-click
+  to place B on the plot. Reversed cursors are accepted. Zooming does not move them.
+
+The gate is shaded, with dashed boundaries when visible. Time zero is record start,
+or the trigger when **Align trigger** is enabled and that capture has a trigger.
+Every channel uses the same time axis; its row reports the actual first/last sample
+times, count and duration. Boundaries include samples exactly on the cursor. Empty
+gates and gates without enough cycles show dashes for unavailable readings. Clipping
+remains a record-level flag: narrowing the gate does not clear it. Reference deltas
+use only overlapping samples inside the gate; their tooltip reports that count.
+
+**More measurements** reveals minimum, maximum, AC RMS, period, negative duty/width,
+cycle mean/RMS and crest factor (peak absolute amplitude divided by RMS). Scroll the
+table horizontally to reach the added columns. Cycle mean/RMS use complete rising-
+edge-to-rising-edge cycles inside the gate and analytically integrate the linearly
+interpolated waveform, rather than rounding edges to sample indices. Their tooltips
+give the cycle count and duration. Ordinary mean/RMS still use every sample in the
+gate; cycle values can therefore differ, especially at low sampling resolution.
+These controls do not change the legacy measurement labels in the main scope view.
+
+### Live statistics
+
+Choose **Vpp**, **RMS** or **Frequency** for count, mean, minimum, maximum and sample
+standard deviation (σ; unavailable until two valid values). **Reset statistics**
+starts a new run without clearing history or the pinned reference. It starts with
+the next newly recorded acquisition; it does not replay old captures. Changing the
+displayed statistic does not reset the run.
+
+Changing the gate or trigger-alignment mode resets the run. Units, channel names,
+sample interval/count or capture setup metadata changes also reset it automatically,
+including same-unit math-mode changes and changes to either input of a math channel.
+Frozen/imported captures show live statistics only if their setup and gate match;
+these are still live-run statistics, not a historical summary of that selection.
+Setup metadata is receipt-time UI context, not an atomic hardware snapshot. Reset
+manually after calibration, external circuit changes or any change not represented
+by this metadata. Save/Open preserves captures, not cursor positions or accumulated
+statistics. Mask testing, logging and capture-library indexing remain later work.
 
 For an integrated GUI smoke test with a working OpenGL display:
 
