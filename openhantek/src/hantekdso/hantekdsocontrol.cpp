@@ -340,7 +340,10 @@ Dso::ErrorCode HantekDsoControl::setTriggerMode( Dso::TriggerMode mode ) {
     controlsettings.trigger.mode = mode;
     if ( mode == Dso::TriggerMode::SINGLE ) {
         singleCapture.arm();
-        triggering->resetTriggeredPositionRaw();
+        // Dock settings can select SINGLE before applySettings constructs the
+        // trigger processor. A newly constructed processor already starts reset.
+        if ( triggering )
+            triggering->resetTriggeredPositionRaw();
         requestRefresh(false);
     }
     if ( Dso::TriggerMode::SINGLE != mode )

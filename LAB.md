@@ -372,6 +372,8 @@ changes were used for these checks. CI also builds/tests on Ubuntu 24.04.
 Workspace regressions additionally cover default visibility, old-layout preservation,
 new-layout restoration, independent browsing/acquisition, background history/logging,
 disconnect availability, repeated Single arming and queued controller-thread order.
+Startup in an already-saved SINGLE mode is covered before trigger processing has
+been constructed, including the real window-before-worker initialization order.
 These checks exposed an existing uninitialized sample-rate target during channel
 setup; it now starts with an explicit no-duration-request state until settings apply.
 They also caught an uninitialized unit in the legacy SI numeric control's

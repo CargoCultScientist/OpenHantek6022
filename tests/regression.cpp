@@ -1038,6 +1038,43 @@ private slots:
         QVERIFY(std::isfinite(control.getSamplerate())); QVERIFY(control.getSamplerate()>0);
         QVERIFY(!calculated.isEmpty());
     }
+    void singleCaptureStartup() {
+        ScopeDevice device; DsoSettings settings(&device); settings.alwaysSave=false;
+        settings.scope.trigger.mode=Dso::TriggerMode::SINGLE;
+        {
+            HantekDsoControl control(&device,device.getModel(),0);
+            QVERIFY(!control.scope); QVERIFY(!control.triggering);
+            const auto before=control.singleCapture.current();
+            // TriggerDock can deliver the saved mode before applySettings has
+            // created the trigger processor. Arming must still invalidate old data.
+            QCOMPARE(control.setTriggerMode(Dso::TriggerMode::SINGLE),Dso::ErrorCode::NONE);
+            QCOMPARE(control.controlsettings.trigger.mode,Dso::TriggerMode::SINGLE);
+            const auto first=control.singleCapture.current();
+            QVERIFY(first>before); QVERIFY(!control.triggering);
+            QCOMPARE(control.setTriggerMode(Dso::TriggerMode::SINGLE),Dso::ErrorCode::NONE);
+            QVERIFY(control.singleCapture.current()>first);
+            QVERIFY(!control.singleCapture.accepts(first));
+            control.applySettings(&settings.scope);
+            QCOMPARE(control.scope,&settings.scope);
+            QVERIFY(control.triggering); QVERIFY(control.mathChannel);
+            QCOMPARE(control.controlsettings.trigger.mode,Dso::TriggerMode::SINGLE);
+        }
+        {
+            // Loading SINGLE directly into a fresh controller has the same
+            // ordering: applySettings sets its mode before constructing Triggering.
+            HantekDsoControl control(&device,device.getModel(),0);
+            QVERIFY(!control.scope); QVERIFY(!control.triggering);
+            control.applySettings(&settings.scope);
+            QCOMPARE(control.scope,&settings.scope);
+            QVERIFY(control.triggering); QVERIFY(control.mathChannel);
+            QCOMPARE(control.controlsettings.trigger.mode,Dso::TriggerMode::SINGLE);
+            QVERIFY(control.singleCapture.current()>0);
+            const auto applied=control.singleCapture.current();
+            control.enableSamplingUI(true);
+            QVERIFY(control.isSamplingUI());
+            QVERIFY(control.singleCapture.current()>applied);
+        }
+    }
     void workspaceIntegration() {
         ScopeDevice device; DsoSettings settings(&device); settings.alwaysSave=false;
         // An old saved layout must not hide the new central workbench or be
@@ -1133,29 +1170,49 @@ private slots:
         QVERIFY(!restored.findChild<QToolBar*>("toolBar")->isHidden());
     }
     void workspaceQueuedSingle() {
-        ScopeDevice device; DsoSettings settings(&device); settings.alwaysSave=false;
-        HantekDsoControl control(&device,device.getModel(),0); control.applySettings(&settings.scope);
-        ExporterRegistry registry(device.getModel()->spec(),&settings);
-        QThread worker; auto guiThread=QThread::currentThread();
-        control.moveToThread(&worker); worker.start();
-        // Ensure cleanup even if an assertion fails.
-        struct Cleanup {
-            HantekDsoControl &control; QThread &worker; QThread *guiThread;
-            ~Cleanup() {
-                QMetaObject::invokeMethod(&control,[this]{control.moveToThread(guiThread);},Qt::BlockingQueuedConnection);
-                worker.quit(); worker.wait();
-            }
-        } cleanup{control,worker,guiThread};
-        MainWindow window(&control,&settings,&registry);
-        auto single=window.findChild<QAction*>("labSingleCapture"); QVERIFY(single);
-        single->trigger();
-        uint64_t first=0, second=0; bool running=false; Dso::TriggerMode mode;
-        QMetaObject::invokeMethod(&control,[&]{first=control.singleCapture.current(); running=control.isSamplingUI(); mode=control.controlsettings.trigger.mode;},Qt::BlockingQueuedConnection);
-        QVERIFY(running); QCOMPARE(mode,Dso::TriggerMode::SINGLE); QVERIFY(first>0);
-        single->trigger();
-        QMetaObject::invokeMethod(&control,[&]{second=control.singleCapture.current();},Qt::BlockingQueuedConnection);
-        QVERIFY(second>first);
-        QTRY_VERIFY(window.findChild<QLabel*>("labAcquisitionBadge")->text().contains("SINGLE ARMED"));
+        for(bool startSingle:{false,true}) {
+            ScopeDevice device; DsoSettings settings(&device); settings.alwaysSave=false;
+            settings.scope.trigger.mode=startSingle?Dso::TriggerMode::SINGLE:Dso::TriggerMode::AUTO;
+            HantekDsoControl control(&device,device.getModel(),0);
+            ExporterRegistry registry(device.getModel()->spec(),&settings);
+            QThread worker; auto guiThread=QThread::currentThread();
+            control.moveToThread(&worker);
+            // Ensure cleanup even if an assertion fails before starting the worker.
+            struct Cleanup {
+                HantekDsoControl &control; QThread &worker; QThread *guiThread;
+                ~Cleanup() {
+                    if(!worker.isRunning()) worker.start();
+                    QMetaObject::invokeMethod(&control,[this]{control.moveToThread(guiThread);},Qt::BlockingQueuedConnection);
+                    worker.quit(); worker.wait();
+                }
+            } cleanup{control,worker,guiThread};
+            // Match main.cpp: construct the window against an uninitialized
+            // controller on a stopped worker, enable sampling, then start it.
+            MainWindow window(&control,&settings,&registry);
+            QVERIFY(!worker.isRunning());
+            QVERIFY(!control.scope); QVERIFY(!control.triggering);
+            control.enableSamplingUI(true);
+            worker.start();
+            uint64_t initial=0, first=0, second=0;
+            bool ready=false, running=false;
+            Dso::TriggerMode mode=Dso::TriggerMode::AUTO;
+            QVERIFY(QMetaObject::invokeMethod(&control,[&]{
+                ready=control.scope==&settings.scope && bool(control.triggering) && bool(control.mathChannel);
+                initial=control.singleCapture.current(); running=control.isSamplingUI(); mode=control.controlsettings.trigger.mode;
+            },Qt::BlockingQueuedConnection));
+            QVERIFY(ready); QVERIFY(running); QCOMPARE(mode,settings.scope.trigger.mode);
+            if(startSingle) QVERIFY(initial>0);
+            auto single=window.findChild<QAction*>("labSingleCapture"); QVERIFY(single);
+            single->trigger();
+            QVERIFY(QMetaObject::invokeMethod(&control,[&]{
+                first=control.singleCapture.current(); running=control.isSamplingUI(); mode=control.controlsettings.trigger.mode;
+            },Qt::BlockingQueuedConnection));
+            QVERIFY(running); QCOMPARE(mode,Dso::TriggerMode::SINGLE); QVERIFY(first>initial);
+            single->trigger();
+            QVERIFY(QMetaObject::invokeMethod(&control,[&]{second=control.singleCapture.current();},Qt::BlockingQueuedConnection));
+            QVERIFY(second>first); QVERIFY(!control.singleCapture.accepts(first));
+            QTRY_VERIFY(window.findChild<QLabel*>("labAcquisitionBadge")->text().contains("SINGLE ARMED"));
+        }
     }
     void integratedGuiSmoke() {
         if(!qEnvironmentVariableIsSet("OH_GUI_SCREENSHOT")) QSKIP("Requires a real OpenGL display; run explicitly with OH_GUI_SCREENSHOT");
