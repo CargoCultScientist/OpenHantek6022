@@ -17,6 +17,7 @@ enum Unit { UNIT_NONE, UNIT_VOLTS, UNIT_DECIBEL, UNIT_SECONDS, UNIT_HERTZ, UNIT_
 /// \param unit The unit for the value.
 /// \param precision Significant digits, 0 for integer, -1 for auto.
 /// \return String with the value and unit.
+/// Non-finite measurements are shown as an em dash (unavailable).
 QString valueToString( double value, Unit unit, int precision = -1 );
 
 /// \brief Converts string containing value and (prefix+)unit to double

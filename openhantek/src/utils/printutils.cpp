@@ -9,6 +9,9 @@
 #include "utils/printutils.h"
 
 QString valueToString( double value, Unit unit, int precision ) {
+    // Invalid measurements have no finite decimal exponent to convert to an int.
+    if ( !std::isfinite( value ) )
+        return QApplication::tr( "—" );
     char format = ( precision < 0 ) ? 'g' : 'f';
 
     switch ( unit ) {
@@ -63,6 +66,8 @@ QString valueToString( double value, Unit unit, int precision ) {
 
     case UNIT_DECIBEL:
         // Power level string representation
+        if ( value == 0.0 )
+            return QApplication::tr( "%1 dB" ).arg( 0 );
         return QApplication::tr( "%1 dB" ).arg(
             value, 0, format,
             ( precision <= 0 ) ? precision : qBound( 0, precision - 1 - int( floor( log10( fabs( value ) ) ) ), precision ) );
@@ -93,11 +98,11 @@ QString valueToString( double value, Unit unit, int precision ) {
             else if ( fabs( value ) < 3600 )
                 return QApplication::tr( "%1 min" )
                     .arg( value / 60, 0, format,
-                          ( precision <= 0 ) ? precision : ( precision - 1 - int( floor( log10( value / 60 ) ) ) ) );
+                          ( precision <= 0 ) ? precision : ( precision - 1 - int( floor( log10( fabs( value ) / 60 ) ) ) ) );
             else
                 return QApplication::tr( "%1 h" ).arg(
                     value / 3600, 0, format,
-                    ( precision <= 0 ) ? precision : qMax( 0, precision - 1 - int( floor( log10( value / 3600 ) ) ) ) );
+                    ( precision <= 0 ) ? precision : qMax( 0, precision - 1 - int( floor( log10( fabs( value ) / 3600 ) ) ) ) );
         } else
             return QApplication::tr( "%1 s" ).arg( 0 );
 
@@ -140,12 +145,14 @@ QString valueToString( double value, Unit unit, int precision ) {
             return QApplication::tr( "%1 S" ).arg( 0 );
 
     case UNIT_NONE:
+        if ( value == 0.0 )
+            return QStringLiteral( "0" );
         return QString::number(
             value, format,
             ( precision <= 0 ) ? precision : qBound( 0, precision - 1 - int( floor( log10( fabs( value ) ) ) ), precision ) );
 
     case UNIT_COUNT:
-        return QString::number( int( round( value ) ) );
+        return QString::number( std::round( value ), 'f', 0 );
 
     default:
         return QString();

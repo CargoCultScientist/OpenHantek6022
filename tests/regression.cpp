@@ -897,6 +897,27 @@ private slots:
         QCOMPARE(mode->currentIndex(),2); QVERIFY(a->value()>0);
         a->setValue(2);b->setValue(3); QVERIFY(table->item(0,11)->text().contains("No finite samples"));
     }
+    void measurementFormattingBoundaries() {
+        for(auto unit:{UNIT_NONE,UNIT_VOLTS,UNIT_DECIBEL,UNIT_SECONDS,UNIT_HERTZ,
+                       UNIT_SAMPLES,UNIT_COUNT,UNIT_WATTS,UNIT_VOLTSQUARE}) {
+            for(int precision:{-1,0,3,6}) {
+                QVERIFY(valueToString(0.0,unit,precision).startsWith("0"));
+                QVERIFY(valueToString(-0.0,unit,precision).startsWith("0"));
+                for(double invalid:{std::numeric_limits<double>::quiet_NaN(),
+                                    std::numeric_limits<double>::infinity(),
+                                    -std::numeric_limits<double>::infinity()})
+                    QCOMPARE(valueToString(invalid,unit,precision),QString::fromUtf8("—"));
+                for(double finite:{std::numeric_limits<double>::denorm_min(),
+                                   std::numeric_limits<double>::max(),-120.0,-7200.0})
+                    QVERIFY(!valueToString(finite,unit,precision).isEmpty());
+            }
+        }
+        QCOMPARE(valueToString(0,UNIT_DECIBEL,3),QString("0 dB"));
+        QCOMPARE(valueToString(-120,UNIT_SECONDS,3),QString("-2.00 min"));
+        QCOMPARE(valueToString(-7200,UNIT_SECONDS,3),QString("-2.00 h"));
+        QCOMPARE(valueToString(4294967296.0,UNIT_COUNT),QString("4294967296"));
+        QCOMPARE(valueToString(-1.5,UNIT_COUNT),QString("-2"));
+    }
     void spinBoxUnitsInitialized() {
         SiSpinBox plain;
         QCOMPARE(plain.textFromValue(1.0),valueToString(1.0,UNIT_NONE,-1));
