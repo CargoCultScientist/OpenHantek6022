@@ -49,6 +49,7 @@
 #include <QButtonGroup>
 #include "docks/HorizontalDock.h"
 #include "docks/TriggerDock.h"
+#include "docks/VoltageDock.h"
 #include "widgets/sispinbox.h"
 #include "widgets/datagrid.h"
 
@@ -981,6 +982,25 @@ private slots:
             for(const auto &button:buttons) QVERIFY(button.isNull());
             for(const auto &slider:sliders) QVERIFY(slider.isNull());
         }
+    }
+    void mathControlsOwned() {
+        struct TestDock : VoltageDock {
+            using VoltageDock::VoltageDock;
+            using VoltageDock::channelBlocks;
+        };
+        ScopeDevice device; DsoSettings settings(&device); settings.alwaysSave=false;
+        QPointer<QCheckBox> invert;
+        QPointer<QSpinBox> attenuation;
+        {
+            TestDock dock(&settings.scope,device.getModel()->spec(),nullptr);
+            const auto &math=dock.channelBlocks.back();
+            invert=math.invertCheckBox; attenuation=math.attnSpinBox;
+            QVERIFY(invert->parent()); QVERIFY(attenuation->parent());
+            QVERIFY(invert->isHidden()); QVERIFY(attenuation->isHidden());
+            dock.loadSettings(&settings.scope,device.getModel()->spec());
+            QVERIFY(invert->isHidden()); QVERIFY(attenuation->isHidden());
+        }
+        QVERIFY(invert.isNull()); QVERIFY(attenuation.isNull());
     }
     void samplerateTargetsInitialized() {
         ScopeDevice device; DsoSettings settings(&device);

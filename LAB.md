@@ -376,5 +376,19 @@ These checks exposed an existing uninitialized sample-rate target during channel
 setup; it now starts with an explicit no-duration-request state until settings apply.
 They also caught an uninitialized unit in the legacy SI numeric control's
 constructor; formatting now starts with a defined unit before Qt sets its value.
+Lifecycle checks also cover initialized slider directions and step sizes, safe
+slider removal during a drag, deterministic rate/timebase initialization in either
+update order, and ownership of hidden cursor, zoom-marker and math-channel controls.
+Hidden controls remain attached to their owning window and are freed on shutdown.
 The integrated GUI check renders both tabs, verifies that a pre-initialization
 capture reaches the actual OpenGL plot, and checks a 1280×800 default workspace.
+It also opens the live-scope hardcopy action from Capture Lab and checks that the
+saved image contains waveform pixels, not just a frame or grid.
+
+The `Lab regression tests` GitHub workflow builds this branch in debug and
+address/undefined-behaviour sanitizer configurations, with leak detection enabled.
+The debug job runs the integrated GUI test under software OpenGL and uploads
+workspace previews and a Linux development binary. These remote checks avoid
+local compilation on the thermally unstable development machine. Downloaded
+development binaries are not installers; use only artifacts for the intended
+commit after reviewing all its checks.

@@ -57,8 +57,8 @@ VoltageDock::VoltageDock( DsoSettingsScope *scope, const Dso::ControlSpecificati
         b.gainComboBox = new QComboBox();
         if ( scope->toolTipVisible )
             b.gainComboBox->setToolTip( tr( "Voltage range per vertical screen division" ) );
-        b.invertCheckBox = new QCheckBox( tr( "Invert" ) );
-        b.attnSpinBox = new QSpinBox();
+        b.invertCheckBox = new QCheckBox( tr( "Invert" ), this );
+        b.attnSpinBox = new QSpinBox( this );
         b.attnSpinBox->setStepType( QAbstractSpinBox::AdaptiveDecimalStepType );
         if ( scope->toolTipVisible )
             b.attnSpinBox->setToolTip( tr( "Set probe attenuation, scroll or type a value to select" ) );
@@ -97,6 +97,9 @@ VoltageDock::VoltageDock( DsoSettingsScope *scope, const Dso::ControlSpecificati
             divider->setPalette( palette ); // reduce the contrast of the divider
             dockLayout->addWidget( divider, row++, 0, 1, 3 );
         } else { // MATH function, all in one row
+            // Settings still use these controls, but the math row has no probe controls.
+            b.invertCheckBox->hide();
+            b.attnSpinBox->hide();
             dockLayout->addWidget( b.usedCheckBox, row, 0 );
             dockLayout->addWidget( b.gainComboBox, row, 1 );
             dockLayout->addWidget( b.miscComboBox, row, 2 );
