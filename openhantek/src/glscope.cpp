@@ -481,12 +481,16 @@ void GlScope::initializeGL() {
     generateGrid(); // initialize the grid draw structures
 
     shaderCompileSuccess = true;
+    if (pendingInitialFrame)
+        showData(std::move(pendingInitialFrame));
 }
 
 
 void GlScope::showData( std::shared_ptr< PPresult > newData ) {
-    if ( !shaderCompileSuccess )
+    if ( !shaderCompileSuccess ) {
+        pendingInitialFrame = std::move(newData);
         return;
+    }
     makeCurrent();
     // Remove too much entries
     while ( view->digitalPhosphorDraws() < m_GraphHistory.size() )

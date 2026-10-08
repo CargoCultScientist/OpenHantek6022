@@ -26,6 +26,10 @@ public:
     explicit CaptureDock(const DsoSettings *settings, QWidget *parent=nullptr);
     void ingest(const std::shared_ptr<PPresult> &frame);
     bool confirmDiscardLog();
+    void setEmbedded();
+    QString activitySummary() const;
+signals:
+    void activityChanged(const QString &summary);
 private:
     const DsoSettings *settings;
     CaptureHistory history;

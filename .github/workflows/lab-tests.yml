@@ -1,22 +1,59 @@
 name: Lab regression tests
 on:
   push:
-    branches: [main, 'feature/**']
+    branches: [main, 'feature/**', 'codex/**']
   pull_request:
 permissions:
   contents: read
 jobs:
   regression:
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [debug, sanitizers]
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake g++ qt6-base-dev qt6-tools-dev libqt6opengl6-dev libfftw3-dev libusb-1.0-0-dev
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ qt6-base-dev qt6-tools-dev libqt6opengl6-dev libfftw3-dev libusb-1.0-0-dev xvfb libgl1-mesa-dri
       - name: Configure
+        if: matrix.configuration == 'debug'
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+      - name: Configure sanitizers
+        if: matrix.configuration == 'sanitizers'
+        run: >-
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g1"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
       - name: Build
         run: cmake --build build -j2
       - name: Test
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: ctest --test-dir build --output-on-failure
+      - name: Verify integrated workspace with software OpenGL
+        if: matrix.configuration == 'debug'
+        env:
+          QT_QPA_PLATFORM: xcb
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          OH_GUI_SCREENSHOT: ${{ runner.temp }}/workspace.png
+        run: xvfb-run -a -s '-screen 0 1920x1080x24' build/openhantek/oh_regression integratedGuiSmoke
+      - name: Upload workspace previews
+        if: always() && matrix.configuration == 'debug'
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-previews
+          path: ${{ runner.temp }}/workspace.png*
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Upload verified Linux development binary
+        if: success() && matrix.configuration == 'debug'
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenHantekLab-linux-debug
+          path: build/openhantek/OpenHantekLab
+          retention-days: 14

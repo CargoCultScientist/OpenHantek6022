@@ -44,6 +44,9 @@
 #include <QPlainTextEdit>
 #include <QDialogButtonBox>
 #include <QLockFile>
+#include <QToolBar>
+#include "docks/HorizontalDock.h"
+#include "docks/TriggerDock.h"
 
 int verboseLevel = 0;
 
@@ -889,6 +892,140 @@ private slots:
         QCOMPARE(mode->currentIndex(),2); QVERIFY(a->value()>0);
         a->setValue(2);b->setValue(3); QVERIFY(table->item(0,11)->text().contains("No finite samples"));
     }
+    void samplerateTargetsInitialized() {
+        ScopeDevice device; DsoSettings settings(&device);
+        HantekDsoControl control(&device,device.getModel(),0);
+        QCOMPARE(control.controlsettings.samplerate.target.samplerateSet,Dso::ControlSettingsSamplerateTarget::Duration);
+        QCOMPARE(control.controlsettings.samplerate.target.duration,0.0);
+        QCOMPARE(control.controlsettings.samplerate.target.samplerate,1e6);
+        QSignalSpy calculated(&control,&HantekDsoControl::samplerateCalculated);
+        control.setChannelUsed(0,true); // Safe before the first timebase request.
+        QVERIFY(calculated.isEmpty());
+        settings.scope.horizontal.timebase=.001;
+        control.applySettings(&settings.scope);
+        QCOMPARE(control.controlsettings.samplerate.target.duration,.01);
+        QVERIFY(std::isfinite(control.getSamplerate())); QVERIFY(control.getSamplerate()>0);
+        QVERIFY(!calculated.isEmpty());
+    }
+    void workspaceIntegration() {
+        ScopeDevice device; DsoSettings settings(&device); settings.alwaysSave=false;
+        // An old saved layout must not hide the new central workbench or be
+        // silently rewritten during construction.
+        QMainWindow oldWindow;
+        auto oldDock=new QDockWidget(&oldWindow); oldDock->setObjectName("labCaptureHistory");
+        oldWindow.addDockWidget(Qt::BottomDockWidgetArea,oldDock); oldDock->hide();
+        settings.mainWindowState=oldWindow.saveState();
+        const auto oldState=settings.mainWindowState;
+        HantekDsoControl control(&device,device.getModel(),0); control.applySettings(&settings.scope);
+        ExporterRegistry registry(device.getModel()->spec(),&settings);
+        MainWindow window(&control,&settings,&registry);
+        auto workspace=window.findChild<QTabWidget*>("labWorkspace");
+        auto dock=window.findChild<Lab::CaptureDock*>();
+        auto badge=window.findChild<QLabel*>("labAcquisitionBadge");
+        auto showScope=window.findChild<QAction*>("labShowScope");
+        auto showCapture=window.findChild<QAction*>("labShowCapture");
+        auto single=window.findChild<QAction*>("labSingleCapture");
+        auto run=window.findChild<QAction*>("actionSampling");
+        QVERIFY(workspace && dock && badge && showScope && showCapture && single && run);
+        QCOMPARE(workspace->currentWidget(),dock);
+        QCOMPARE(window.dockWidgetArea(dock),Qt::NoDockWidgetArea);
+        QVERIFY(!dock->toggleViewAction()->isEnabled());
+        QVERIFY(!window.findChild<QToolBar*>("toolBar")->toggleViewAction()->isEnabled());
+        QCOMPARE(settings.mainWindowState,oldState);
+        QVERIFY(badge->text().contains("DEMO")); QVERIFY(badge->text().contains("RUNNING"));
+        QVERIFY(!dock->findChild<QPushButton*>("labConfigure")->isChecked());
+        auto timebase=settings.scope.horizontal.timebase;
+        auto gain=settings.scope.voltage[0].gainStepIndex;
+        auto trigger=settings.scope.trigger.mode;
+        QSignalSpy sampling(&control,&HantekDsoControl::showSamplingStatus);
+        auto frame=std::make_shared<PPresult>(3); frame->tag=41; frame->capturedAtMs=1000;
+        for(unsigned ch=0;ch<2;++ch) {
+            auto data=frame->modifiableData(ch); data->voltage.interval=1e-6;
+            for(int i=0;i<1000;++i) data->voltage.samples.push_back(std::sin(2*M_PI*i/100));
+        }
+        window.showNewData(frame);
+        auto list=dock->findChild<QListWidget*>("labCaptureList");
+        auto follow=dock->findChild<QCheckBox*>("labFollowLatest");
+        auto browserBadge=dock->findChild<QLabel*>("labSelectionBadge");
+        dock->findChild<QPushButton*>("labSetReference")->click(); follow->setChecked(false);
+        auto collect=dock->findChild<QCheckBox*>("labCollectLog"); collect->setChecked(true);
+        showScope->trigger(); QCOMPARE(workspace->currentIndex(),1);
+        frame=std::make_shared<PPresult>(*frame); frame->tag=42; frame->capturedAtMs+=100;
+        window.showNewData(frame);
+        QCOMPARE(list->count(),2);
+        QVERIFY(browserBadge->text().contains("41"));
+        auto activity=window.findChild<QLabel*>("labWorkspaceActivity"); QVERIFY(activity);
+        QVERIFY(activity->text().contains("frozen #41")); QVERIFY(activity->text().contains("collecting"));
+        QVERIFY(activity->text().contains("1 readings in RAM")); QVERIFY(activity->text().contains("UNEXPORTED"));
+        showCapture->trigger(); QCOMPARE(workspace->currentWidget(),dock);
+        QVERIFY(!follow->isChecked()); QVERIFY(collect->isChecked());
+        // This headless test never shows its OpenGL window. Request the same
+        // refresh an analysis-control change would perform while hidden.
+        dock->findChild<QComboBox*>("labStatisticMetric")->setCurrentIndex(1);
+        QVERIFY(dock->findChild<QLabel*>("labLogBadge")->text().contains("1 in RAM"));
+        QCOMPARE(settings.scope.horizontal.timebase,timebase);
+        QCOMPARE(settings.scope.voltage[0].gainStepIndex,gain);
+        QCOMPARE(settings.scope.trigger.mode,trigger);
+        QVERIFY(sampling.isEmpty()); // Navigation is not acquisition control.
+
+        run->trigger(); QVERIFY(!control.isSamplingUI()); QVERIFY(badge->text().contains("STOPPED"));
+        QVERIFY(browserBadge->text().contains("VIEW FROZEN"));
+        single->trigger(); QCOMPARE(settings.scope.trigger.mode,Dso::TriggerMode::SINGLE);
+        QCOMPARE(control.controlsettings.trigger.mode,Dso::TriggerMode::SINGLE);
+        QVERIFY(control.isSamplingUI()); QVERIFY(badge->text().contains("SINGLE ARMED"));
+        auto arm=control.singleCapture.current(); single->trigger();
+        QVERIFY(control.singleCapture.current()>arm); QVERIFY(!control.singleCapture.accepts(arm));
+        control.enableSamplingUI(false); QCOMPARE(run->text(),QString("Rearm"));
+        run->trigger(); QVERIFY(control.isSamplingUI());
+        window.deviceConnectionStateChanged(DeviceConnectionState::Disconnected,"Unplugged");
+        QVERIFY(badge->text().contains("DISCONNECTED")); QVERIFY(!single->isEnabled()); QVERIFY(!run->isEnabled());
+        QVERIFY(dock->isEnabled()); QVERIFY(dock->findChild<QPushButton*>("labLibrary")->isEnabled());
+        showScope->trigger(); showCapture->trigger(); QCOMPARE(list->count(),2);
+        window.deviceConnectionStateChanged(DeviceConnectionState::Connected,"Reconnected");
+        QVERIFY(single->isEnabled()); QVERIFY(run->isEnabled()); QVERIFY(badge->text().contains("STOPPED"));
+        control.enableSamplingUI(true); QVERIFY(badge->text().contains("SINGLE ARMED"));
+        auto horizontal=window.findChild<HorizontalDock*>(); QVERIFY(horizontal);
+        horizontal->hide(); showScope->trigger();
+        window.findChild<QAction*>("labResetLayout")->trigger();
+        QCOMPARE(workspace->currentWidget(),dock); QVERIFY(!horizontal->isHidden());
+        QVERIFY(!follow->isChecked()); QCOMPARE(list->count(),2); QVERIFY(collect->isChecked());
+        QCOMPARE(settings.scope.horizontal.timebase,timebase);
+        // A versioned workspace state is restored without resetting acquisition.
+        horizontal->hide(); settings.mainWindowState=window.saveState(1);
+        DsoSettings restoredSettings(&device); restoredSettings.alwaysSave=false;
+        restoredSettings.mainWindowState=settings.mainWindowState;
+        HantekDsoControl restoredControl(&device,device.getModel(),0); restoredControl.applySettings(&restoredSettings.scope);
+        ExporterRegistry restoredRegistry(device.getModel()->spec(),&restoredSettings);
+        MainWindow restored(&restoredControl,&restoredSettings,&restoredRegistry);
+        QVERIFY(restored.findChild<HorizontalDock*>()->isHidden());
+        QCOMPARE(restored.findChild<QTabWidget*>("labWorkspace")->currentIndex(),0);
+        QVERIFY(!restored.findChild<QToolBar*>("toolBar")->isHidden());
+    }
+    void workspaceQueuedSingle() {
+        ScopeDevice device; DsoSettings settings(&device); settings.alwaysSave=false;
+        HantekDsoControl control(&device,device.getModel(),0); control.applySettings(&settings.scope);
+        ExporterRegistry registry(device.getModel()->spec(),&settings);
+        QThread worker; auto guiThread=QThread::currentThread();
+        control.moveToThread(&worker); worker.start();
+        // Ensure cleanup even if an assertion fails.
+        struct Cleanup {
+            HantekDsoControl &control; QThread &worker; QThread *guiThread;
+            ~Cleanup() {
+                QMetaObject::invokeMethod(&control,[this]{control.moveToThread(guiThread);},Qt::BlockingQueuedConnection);
+                worker.quit(); worker.wait();
+            }
+        } cleanup{control,worker,guiThread};
+        MainWindow window(&control,&settings,&registry);
+        auto single=window.findChild<QAction*>("labSingleCapture"); QVERIFY(single);
+        single->trigger();
+        uint64_t first=0, second=0; bool running=false; Dso::TriggerMode mode;
+        QMetaObject::invokeMethod(&control,[&]{first=control.singleCapture.current(); running=control.isSamplingUI(); mode=control.controlsettings.trigger.mode;},Qt::BlockingQueuedConnection);
+        QVERIFY(running); QCOMPARE(mode,Dso::TriggerMode::SINGLE); QVERIFY(first>0);
+        single->trigger();
+        QMetaObject::invokeMethod(&control,[&]{second=control.singleCapture.current();},Qt::BlockingQueuedConnection);
+        QVERIFY(second>first);
+        QTRY_VERIFY(window.findChild<QLabel*>("labAcquisitionBadge")->text().contains("SINGLE ARMED"));
+    }
     void integratedGuiSmoke() {
         if(!qEnvironmentVariableIsSet("OH_GUI_SCREENSHOT")) QSKIP("Requires a real OpenGL display; run explicitly with OH_GUI_SCREENSHOT");
         QVERIFY(!GlScope::getOpenGLversion().isEmpty());
@@ -897,7 +1034,10 @@ private slots:
         settings.scope.horizontal.timebase=.0001;
         HantekDsoControl control(&device,device.getModel(),0);control.applySettings(&settings.scope);
         ExporterRegistry registry(device.getModel()->spec(),&settings);
-        MainWindow window(&control,&settings,&registry);window.resize(1650,1000);window.show();
+        MainWindow window(&control,&settings,&registry);
+        // Keep the synthetic test independent of the user's tiling layout.
+        window.setWindowFlag(Qt::X11BypassWindowManagerHint);
+        window.resize(1650,1000);window.show();
         SpectrumGenerator spectrum(&settings.scope,&settings.analysis);
         GraphGenerator graphs(&settings.scope,&settings.view);
         auto frame=std::make_shared<PPresult>(3);frame->tag=71;frame->capturedAtMs=QDateTime::currentMSecsSinceEpoch();
@@ -908,7 +1048,9 @@ private slots:
         }
         static_cast<Processor&>(spectrum).process(frame.get());static_cast<Processor&>(graphs).process(frame.get());
         window.showNewData(frame);
-        auto dock=window.findChild<Lab::CaptureDock*>();QVERIFY(dock);dock->show();
+        auto dock=window.findChild<Lab::CaptureDock*>();QVERIFY(dock);
+        auto workspace=window.findChild<QTabWidget*>("labWorkspace"); QVERIFY(workspace);
+        QCOMPARE(workspace->currentWidget(),dock); QVERIFY(dock->isVisible());
         for(auto button:dock->findChildren<QPushButton*>()) if(button->text()=="Set reference") button->click();
         frame=std::make_shared<PPresult>(*frame);frame->tag=72;frame->capturedAtMs+=100;
         for(auto &sample:frame->modifiableData(0)->voltage.samples) sample+=.08;
@@ -926,6 +1068,45 @@ private slots:
         // layout must still fit, independently of the window manager's allocation.
         QVERIFY(window.minimumSizeHint().width()<=1650); QVERIFY(window.minimumSizeHint().height()<=1000);
         QVERIFY(window.grab().save(qEnvironmentVariable("OH_GUI_SCREENSHOT")));
+        // Hardcopy from Capture Lab must reveal the live view before capturing
+        // its previously uninitialized GL surface. Keep test files temporary.
+        {
+            QTemporaryDir exports; QVERIFY(exports.isValid());
+            struct RestoreDirectory { QString path; ~RestoreDirectory(){QDir::setCurrent(path);} } restore{QDir::currentPath()};
+            QVERIFY(QDir::setCurrent(exports.path()));
+            auto hardcopy=window.findChild<QAction*>("labScopeHardcopy"); QVERIFY(hardcopy);
+            hardcopy->trigger();
+            QTRY_COMPARE(QDir(exports.path()).entryList({"*.png"},QDir::Files).size(),1);
+            const auto file=QDir(exports.path()).entryList({"*.png"},QDir::Files).front();
+            QVERIFY(!QImage(exports.filePath(file)).isNull());
+            QCOMPARE(workspace->currentIndex(),1);
+            QCOMPARE(settings.view.colors,&settings.view.screen);
+            QCOMPARE(dock->findChild<QListWidget*>("labCaptureList")->count(),3);
+        }
+        QTest::qWait(300);
+        // Frames arrived before the hidden live tab had a GL context. Its first
+        // reveal must display the held waveform, without requiring a new capture.
+        int yellowPixels=0;
+        for(auto scope:window.findChildren<GlScope*>()) if(scope->isVisible()) {
+            const auto pixels=scope->grabFramebuffer();
+            for(int y=10;y<pixels.height()-10;++y) for(int x=10;x<pixels.width()-10;++x) {
+                const auto color=pixels.pixelColor(x,y);
+                if(color.red()>180 && color.green()>180 && color.blue()<80) ++yellowPixels;
+            }
+        }
+        QVERIFY2(yellowPixels>100,"The live scope did not render the capture received before GL initialization");
+        QVERIFY(window.grab().save(qEnvironmentVariable("OH_GUI_SCREENSHOT")+".scope.png"));
+        workspace->setCurrentIndex(0); QTest::qWait(100);
+        auto scroll=dock->findChild<QScrollArea*>("labWorkbenchScroll");
+        QCOMPARE(scroll->horizontalScrollBar()->maximum(),0);
+        QCOMPARE(scroll->verticalScrollBar()->maximum(),0);
+        QVERIFY(dock->findChild<QWidget*>("labCapturePlot")->height()>=dock->height()/2);
+        // Fixed size constrains the tiling window manager for a laptop-size check.
+        window.setFixedSize(1280,800); QTest::qWait(200);
+        QCOMPARE(window.size(),QSize(1280,800));
+        QCOMPARE(scroll->horizontalScrollBar()->maximum(),0);
+        QCOMPARE(scroll->verticalScrollBar()->maximum(),0);
+        QVERIFY(window.grab().save(qEnvironmentVariable("OH_GUI_SCREENSHOT")+".compact.png"));
         dock->findChild<QCheckBox*>("labCollectLog")->setChecked(true);
         frame=std::make_shared<PPresult>(*frame); frame->tag=74; frame->capturedAtMs+=100; window.showNewData(frame);
         QTimer::singleShot(0,[] {

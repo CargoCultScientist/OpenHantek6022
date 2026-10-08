@@ -48,11 +48,54 @@ need bench validation. The existing acquisition/display pipeline is not gapless.
 The correctness-only release is on the fork's `main` branch. The additions below
 started on `feature/correctness-and-captures`, followed by `feature/measurement-spans`.
 The workbench followed on `feature/capture-workbench` and `feature/instrument-ui-patterns`.
-The current development branch is `feature/capture-library`, building on those changes.
+The library followed on `feature/capture-library`; the integrated application
+workspace is on `codex/integrated-workspace`, building on those changes.
 These additions are not silently bundled into the correctness-only release candidate.
 
-Open **View → Capture history & measurements** (`Ctrl+H`). The scope above remains
-live when selecting a historical record below. **Follow latest** returns the browser
+### Integrated workspace
+
+The application now opens directly into **Capture Lab**. It is the central
+workspace, not a hidden bottom dock. **Live scope / FFT** retains the original
+scope display, trigger-level/position sliders, FFT, XY, phosphor, zoom and scope
+cursors. Switch with `Ctrl+1` (or `Ctrl+H`) and `Ctrl+2`. Both views share the
+same acquisition and capture history; switching never starts/stops acquisition,
+clears history, unpins a reference or changes a frozen selection.
+
+- **Run / Stop** and **Single** remain at the top in either view. Single selects
+  SINGLE trigger mode and arms a fresh acquisition using the existing source,
+  slope and level. Repeat Single to rearm, including while already armed. A
+  stopped SINGLE shows **Rearm**; choose Auto in Trigger to resume continuous
+  operation. These controls do not turn Follow latest back on for a frozen view.
+- The controller badge explicitly distinguishes **DEMO / SCOPE** and
+  **RUNNING / STOPPED / SINGLE ARMED / DISCONNECTED**. This describes acquisition,
+  not the age or selection of the waveform in Capture Lab. RUNNING is not a
+  guarantee of uninterrupted or gapless samples.
+- **Channels / probes** stays alongside analysis. **Timebase**, **Trigger** and
+  **FFT** share a tabbed control area. They affect incoming acquisitions, not
+  saved sample values. Control docks remain movable; **View → Reset workspace
+  layout** restores their arrangement without touching acquisition or analysis.
+- A persistent footer shows history recording, the analysis selection state,
+  RAM log collection and unexported readings on either view. On disconnect,
+  acquisition controls are disabled while saved captures remain usable.
+- The live display retains the latest frame received before its first OpenGL
+  initialization, so opening it after a stopped/Single acquisition is not blank.
+  It does not invent another acquisition or add another history entry.
+
+The dark shell and readable control labels match Capture Lab; saved trace colours,
+font choices, scope settings and calibration are not rewritten by this change.
+Window layout has its own version: older dock arrangements migrate to the new
+default in memory, while compatible new layouts restore normally. Existing stored
+layout bytes change only through normal Save/auto-save; acquisition settings do
+not undergo a migration. The acquisition toolbar remains visible after restore.
+Capture Lab is the startup view on every launch; the last selected tab is not saved.
+**Export → Screenshot** captures the integrated workspace. The explicitly labelled
+**Live scope hardcopy / Print live scope** actions first reveal the live scope view;
+they do not export a historical selection. Use Capture Lab's Save capture or
+Library for that selection. Revealing the live view does not unfreeze analysis.
+The legacy CSV/JSON and other exporter menu entries are also explicitly labelled
+**live acquisition**; their source does not follow Capture Lab's selected history.
+
+**Follow latest** returns the browser
 to the latest acquisition. **Record history** pauses/resumes retention without stopping
 the scope. **More → Clear history** asks for confirmation and also resets the
 statistics; saved files, a pinned reference and the session log survive it.
@@ -68,8 +111,8 @@ Channel-coloured reading cards retain explicit names, units, span and validity;
 **Details** opens that channel's table row. **Fit record** resets waveform zoom/pan
 without changing acquisition settings. **Clear reference** is in Analysis settings
 → Reference. Smaller
-windows scroll rather than forcing the main application beyond the screen. Like
-other Qt docks, the workbench can be detached for a larger standalone view.
+windows scroll rather than forcing the main application beyond the screen.
+The workbench itself is now central and cannot be accidentally closed or detached.
 
 - History holds at most 128 displayed acquisitions or 64 MiB of sample/metadata
   payload. A selected record and pinned reference may retain up to two additional
@@ -94,7 +137,7 @@ other Qt docks, the workbench can be detached for a larger standalone view.
 - Analysis has a one-pending-record mailbox: newest wins under overload. Skipped
   acquisition tags are reported in the browser, but cannot detect USB-internal loss.
 
-**Save capture / Open capture** preserve calibrated samples and timing, including
+**Save capture / More → Open capture** preserve calibrated samples and timing, including
 channel units and clipping flags. Open works in demo mode without a device. This
 initial format is `.ohl.json`, deliberately not the proposed ZIP/NumPy `.ohcap` format.
 See [the format specification](docs/lab-capture-format.md).
@@ -154,7 +197,7 @@ browser, including reference differences and live statistics:
 - **Whole record** (default): all retained samples, independent of zoom.
 - **Visible window**: only sample centres inside the browser's visible time axis.
   Wheel zoom and drag pan change the gate. This is the capture-browser window, not
-  the legacy oscilloscope view above it.
+  the separate Live scope / FFT view.
 - **Between cursors**: enter A/B in seconds, or Shift-click to place A and Ctrl-click
   to place B on the plot. Reversed cursors are accepted. Zooming does not move them.
 
@@ -313,7 +356,7 @@ the previous panel state. Tests also cover keyboard activation, channel details,
 Fit record, explicit clipping, action availability, and cancel/confirm history clear.
 These checks do not substitute for user testing. Next evaluate real bench tasks:
 find a failed capture, pin/compare it, gate a measurement, and export a session;
-record misclicks and task time before deciding on a whole-application redesign.
+record misclicks and task time to refine the integrated workspace.
 
 For an integrated GUI smoke test with a working OpenGL display:
 
@@ -325,3 +368,11 @@ Local validation (2026-10-07): regression suite passed with Qt 6.10.2; integrate
 NVIDIA/OpenGL 4.6 GUI smoke test passed; AddressSanitizer, UndefinedBehaviorSanitizer
 and LeakSanitizer regression run passed. No real-device acquisition or firmware
 changes were used for these checks. CI also builds/tests on Ubuntu 24.04.
+
+Workspace regressions additionally cover default visibility, old-layout preservation,
+new-layout restoration, independent browsing/acquisition, background history/logging,
+disconnect availability, repeated Single arming and queued controller-thread order.
+These checks exposed an existing uninitialized sample-rate target during channel
+setup; it now starts with an explicit no-duration-request state until settings apply.
+The integrated GUI check renders both tabs, verifies that a pre-initialization
+capture reaches the actual OpenGL plot, and checks a 1280×800 default workspace.

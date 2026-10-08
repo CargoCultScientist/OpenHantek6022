@@ -122,6 +122,9 @@ class GlScope : public QOpenGLWidget {
 
     // Graphs
     std::list< Graph > m_GraphHistory;
+    // The live tab may not have an OpenGL context yet when acquisition starts.
+    // Retain only the newest frame until it is first shown (also covers SINGLE).
+    std::shared_ptr<PPresult> pendingInitialFrame;
     unsigned currentGraphInHistory = 0;
 
     // OpenGL shader, matrix, var-locations

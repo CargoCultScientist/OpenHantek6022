@@ -21,6 +21,8 @@ class TriggerDock;
 class SpectrumDock;
 class VoltageDock;
 class QAction;
+class QLabel;
+class QTabWidget;
 namespace Lab { class CaptureDock; }
 
 namespace Ui {
@@ -58,6 +60,18 @@ class MainWindow : public QMainWindow {
     // Central widgets
     DsoWidget *dsoWidget;
     Lab::CaptureDock *captureDock;
+    QTabWidget *workspace;
+    QLabel *acquisitionBadge;
+    QLabel *workspaceHint;
+    bool demoDevice = false;
+    bool samplingActive = false;
+    bool deviceAvailable = true;
+    QByteArray defaultWorkspaceState;
+    // Version only the window layout, not the user's scope/calibration settings.
+    static constexpr int workspaceLayoutVersion = 1;
+    void createWorkspace(HantekDsoControl *control, TriggerDock *triggerDock);
+    void updateAcquisitionStatus();
+    void restoreWorkspaceLayout();
 
     // Settings used for the whole program
     DsoSettings *dsoSettings;
@@ -76,4 +90,5 @@ class MainWindow : public QMainWindow {
 
   signals:
     void settingsLoaded( DsoSettingsScope *scope, const Dso::ControlSpecification *spec );
+    void singleCaptureRequested();
 };

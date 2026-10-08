@@ -23,6 +23,7 @@
 
 #include "dsosettings.h"
 #include "lab/capturedock.h"
+#include "sispinbox.h"
 
 #include <QDesktopServices>
 #include <QDir>
@@ -35,6 +36,13 @@
 #include <QPrinter>
 #include <QTimer>
 #include <QValidator>
+#include <QLabel>
+#include <QTabWidget>
+#include <QToolBar>
+#include <QToolButton>
+#include <QVBoxLayout>
+#include <QScreen>
+#include <QTabBar>
 
 #include "OH_VERSION.h"
 
@@ -46,15 +54,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
 
     // suppress nasty warnings, e.g. "kf5.kio.core: Invalid URL ..." or "qt.qpa.xcb: QXcbConnection: XCB error: 3 (BadWindow) ..."
     QLoggingCategory::setFilterRules( "kf5.kio.core=false\nqt.qpa.xcb=false" );
-    QVariantMap colorMap;
-    QString iconPath = QString( ":/images/" );
-    if ( QPalette().color( QPalette::Window ).lightness() < 128 ) { // automatic light/dark icon switch
-        iconPath += "darktheme/";                                   // select top window icons accordingly
-        colorMap.insert( "color-off", QColor( 208, 208, 208 ) );    // light grey normal
-        colorMap.insert( "color-active", QColor( 255, 255, 255 ) ); // white when selected
-    } else {
-        iconPath += "lighttheme/";
-    }
+    const QString iconPath = QStringLiteral(":/images/darktheme/");
     elapsedTime.start();
 
     ui->setupUi( this );
@@ -149,9 +149,11 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     connect( action, &QAction::triggered, this, [ this ]() { screenShot( SCREENSHOT, true ); } );
     ui->menuExport->addAction( action );
 
-    action = new QAction( QIcon( iconPath + "clone.svg" ), tr( "&Hardcopy" ), this );
-    action->setToolTip( tr( "Make an immediate (printable) hardcopy of the display and save it into the current directory" ) );
+    action = new QAction( QIcon( iconPath + "clone.svg" ), tr( "Live scope &hardcopy" ), this );
+    action->setObjectName("labScopeHardcopy");
+    action->setToolTip( tr( "Show and save the live scope display as a PNG in the current directory. This is not the selected historical capture." ) );
     connect( action, &QAction::triggered, this, [ this ]() {
+        workspace->setCurrentIndex(1);
         dsoWidget->switchToPrintColors();
         QTimer::singleShot( 20, this, [ this ]() { screenShot( HARDCOPY, true ); } );
     } );
@@ -164,17 +166,19 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     connect( action, &QAction::triggered, this, [ this ]() { screenShot( SCREENSHOT ); } );
     ui->menuExport->addAction( action );
 
-    action = new QAction( QIcon( iconPath + "save_as.svg" ), tr( "Save Hardcopy As .." ), this );
-    action->setToolTip( tr( "Make a (printable) hardcopy of the display and define the storage location" ) );
+    action = new QAction( QIcon( iconPath + "save_as.svg" ), tr( "Save live scope hardcopy as…" ), this );
+    action->setToolTip( tr( "Show and save the live scope display, not the selected historical capture." ) );
     connect( action, &QAction::triggered, this, [ this ]() {
+        workspace->setCurrentIndex(1);
         dsoWidget->switchToPrintColors();
         QTimer::singleShot( 20, this, [ this ]() { screenShot( HARDCOPY ); } );
     } );
     ui->menuExport->addAction( action );
 
-    action = new QAction( QIcon( iconPath + "print.svg" ), tr( "&Print Screen .." ), this );
-    action->setToolTip( tr( "Send the hardcopy to a printer" ) );
+    action = new QAction( QIcon( iconPath + "print.svg" ), tr( "&Print live scope…" ), this );
+    action->setToolTip( tr( "Show and print the live scope display, not the selected historical capture." ) );
     connect( action, &QAction::triggered, this, [ this ]() {
+        workspace->setCurrentIndex(1);
         dsoWidget->switchToPrintColors();
         QTimer::singleShot( 20, this, [ this ]() { screenShot( PRINTER ); } );
     } );
@@ -183,8 +187,8 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     ui->menuExport->addSeparator();
 
     for ( auto *exporter : *exporterRegistry ) {
-        action = new QAction( QIcon( iconPath + "exporter.svg" ), exporter->name(), this );
-        action->setToolTip( tr( "Export captured data in %1 format for further processing" ).arg( exporter->format() ) );
+        action = new QAction( QIcon( iconPath + "exporter.svg" ), tr("%1 — live acquisition").arg(exporter->name()), this );
+        action->setToolTip( tr( "Export live acquisition data in %1 format, not the selected historical capture. Use Capture Lab's Save capture for that selection." ).arg( exporter->format() ) );
         action->setCheckable( exporter->type() == ExporterInterface::Type::ContinuousExport );
         connect( action, &QAction::triggered, exporterRegistry, [ exporter, exporterRegistry ]( bool checked ) {
             exporterRegistry->setExporterEnabled( exporter,
@@ -213,29 +217,35 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     HorizontalDock *horizontalDock = new HorizontalDock( scope, spec, this );
     TriggerDock *triggerDock = new TriggerDock( scope, spec, this );
     SpectrumDock *spectrumDock = new SpectrumDock( scope, this );
+    voltageDock->setWindowTitle(tr("Channels / probes"));
+    horizontalDock->setWindowTitle(tr("Timebase"));
+    spectrumDock->setWindowTitle(tr("FFT"));
 
     addDockWidget( Qt::RightDockWidgetArea, voltageDock );
     addDockWidget( Qt::RightDockWidgetArea, horizontalDock );
     addDockWidget( Qt::RightDockWidgetArea, triggerDock );
     addDockWidget( Qt::RightDockWidgetArea, spectrumDock );
 
-    captureDock = new Lab::CaptureDock(dsoSettings, this);
-    addDockWidget(Qt::BottomDockWidgetArea, captureDock);
-    captureDock->hide();
-    auto captureAction=captureDock->toggleViewAction();
-    captureAction->setShortcut(QKeySequence("Ctrl+H"));
-    ui->menuView->addAction(captureAction);
-
-    restoreGeometry( dsoSettings->mainWindowGeometry );
-    restoreState( dsoSettings->mainWindowState );
-
     // Central oszilloscope widget
     dsoWidget = new DsoWidget( &dsoSettings->scope, &dsoSettings->view, spec, this );
-    setCentralWidget( dsoWidget );
+    captureDock = new Lab::CaptureDock(dsoSettings, this);
+    createWorkspace(dsoControl, triggerDock);
+
+    // Keep channels in view, with timebase / trigger / FFT sharing the lower
+    // control area. All four original control widgets and signal paths survive.
+    tabifyDockWidget(horizontalDock, triggerDock);
+    tabifyDockWidget(horizontalDock, spectrumDock);
+    horizontalDock->raise();
+    setTabPosition(Qt::AllDockWidgetAreas, QTabWidget::North);
+    defaultWorkspaceState = saveState(workspaceLayoutVersion);
+    const auto available = screen()->availableGeometry().size();
+    resize(qMin(1500, available.width()), qMin(900, available.height()));
+    restoreGeometry(dsoSettings->mainWindowGeometry);
+    restoreWorkspaceLayout();
 
     deviceCommandWidgets = { voltageDock, horizontalDock, triggerDock, spectrumDock, dsoWidget };
     deviceCommandActions = { ui->actionOpen, ui->actionSampling, ui->actionRefresh, ui->actionCalibrateOffset,
-                             ui->actionManualCommand };
+                             ui->actionManualCommand, findChild<QAction*>("labSingleCapture") };
 
     if ( dsoControl->getDevice()->isRealHW() ) { // enable online calibration and manual command input
         // Command field inside the status bar
@@ -326,6 +336,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     connect( triggerDock, &TriggerDock::modeChanged, horizontalDock, &HorizontalDock::triggerModeChanged );
     connect( triggerDock, &TriggerDock::modeChanged, this, [ this ]( Dso::TriggerMode mode ) {
         ui->actionRefresh->setVisible( Dso::TriggerMode::ROLL == mode && dsoSettings->scope.horizontal.samplerate < 10e3 );
+        updateAcquisitionStatus();
     } );
     connect( dsoControl, &HantekDsoControl::samplerateCalculated, this, [ this ]( double samplerate ) {
         ui->actionRefresh->setVisible( Dso::TriggerMode::ROLL == dsoSettings->scope.trigger.mode && samplerate < 10e3 );
@@ -388,20 +399,12 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
 
     // Started/stopped signals from oscilloscope
     connect( dsoControl, &HantekDsoControl::showSamplingStatus, this, [ this ]( bool enabled ) {
-        QSignalBlocker blocker( ui->actionSampling );
-        if ( enabled ) {
-            ui->actionSampling->setIcon( iconPause );
-            ui->actionSampling->setText( tr( "Stop" ) );
-            ui->actionSampling->setStatusTip( tr( "Stop the oscilloscope" ) );
-        } else {
-            ui->actionSampling->setIcon( iconPlay );
-            ui->actionSampling->setText( tr( "Start" ) );
-            ui->actionSampling->setStatusTip( tr( "Start the oscilloscope" ) );
-        }
-        ui->actionSampling->setChecked( enabled );
+        samplingActive = enabled;
+        updateAcquisitionStatus();
     } );
     connect( ui->actionSampling, &QAction::triggered, dsoControl, &HantekDsoControl::enableSamplingUI );
-    ui->actionSampling->setChecked( dsoControl->isSamplingUI() );
+    samplingActive = dsoControl->isSamplingUI();
+    updateAcquisitionStatus();
 
     connect( ui->actionRefresh, &QAction::triggered, dsoControl, &HantekDsoControl::restartSampling );
 
@@ -425,7 +428,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
                 return;
             }
             restoreGeometry( dsoSettings->mainWindowGeometry );
-            restoreState( dsoSettings->mainWindowState );
+            restoreWorkspaceLayout();
 
             emit settingsLoaded( &dsoSettings->scope, spec );
 
@@ -440,7 +443,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
 
     connect( ui->actionSave, &QAction::triggered, this, [ this ]() {
         dsoSettings->mainWindowGeometry = saveGeometry();
-        dsoSettings->mainWindowState = saveState();
+        dsoSettings->mainWindowState = saveState(workspaceLayoutVersion);
         dsoSettings->save();
     } );
 
@@ -452,7 +455,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
         if ( !configFileName.endsWith( ".conf" ) )
             configFileName.append( ".conf" );
         dsoSettings->mainWindowGeometry = saveGeometry();
-        dsoSettings->mainWindowState = saveState();
+        dsoSettings->mainWindowState = saveState(workspaceLayoutVersion);
         if ( !dsoSettings->saveToFile( configFileName ) )
             QMessageBox::warning( this, tr("Save settings"), tr("Could not write the settings file.") );
     } );
@@ -461,7 +464,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
 
     connect( ui->actionSettings, &QAction::triggered, this, [ this ]() {
         dsoSettings->mainWindowGeometry = saveGeometry();
-        dsoSettings->mainWindowState = saveState();
+        dsoSettings->mainWindowState = saveState(workspaceLayoutVersion);
 
         DsoConfigDialog *configDialog = new DsoConfigDialog( dsoSettings, this );
         configDialog->setModal( true );
@@ -562,6 +565,204 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
 }
 
 
+void MainWindow::createWorkspace(HantekDsoControl *control, TriggerDock *triggerDock) {
+    demoDevice = !control->getDevice()->isRealHW();
+    samplingActive = control->isSamplingUI();
+    setObjectName("labMainWindow");
+
+    // A palette scoped to this window gives native controls, menus and dialogs
+    // legible defaults without rewriting the user's saved theme or trace colours.
+    auto palette = this->palette();
+    palette.setColor(QPalette::Window, QColor("#101824"));
+    palette.setColor(QPalette::WindowText, QColor("#dce7f3"));
+    palette.setColor(QPalette::Base, QColor("#152132"));
+    palette.setColor(QPalette::AlternateBase, QColor("#1b2b3e"));
+    palette.setColor(QPalette::Text, QColor("#e4eef8"));
+    palette.setColor(QPalette::Button, QColor("#203044"));
+    palette.setColor(QPalette::ButtonText, QColor("#e4eef8"));
+    palette.setColor(QPalette::Highlight, QColor("#355d70"));
+    palette.setColor(QPalette::HighlightedText, Qt::white);
+    palette.setColor(QPalette::Disabled, QPalette::Text, QColor("#74869a"));
+    palette.setColor(QPalette::Disabled, QPalette::ButtonText, QColor("#74869a"));
+    palette.setColor(QPalette::Disabled, QPalette::WindowText, QColor("#74869a"));
+    setPalette(palette);
+    setStyleSheet(QStringLiteral(R"(
+        QMainWindow#labMainWindow { background: #101824; }
+        QMainWindow#labMainWindow::separator { background: #26394e; width: 5px; height: 5px; }
+        QMainWindow#labMainWindow QToolBar { background: #152132; border: 0; padding: 6px; spacing: 6px; }
+        QMainWindow#labMainWindow QToolButton { padding: 6px 10px; border: 1px solid #3b526b; border-radius: 5px; background: #203044; color: #e4eef8; }
+        QMainWindow#labMainWindow QToolButton:hover { background: #2d475f; }
+        QMainWindow#labMainWindow QToolButton:checked { background: #355d70; border-color: #7bbdbb; }
+        QMainWindow#labMainWindow QToolButton:disabled { color: #74869a; border-color: #26394e; }
+        QMainWindow#labMainWindow QDockWidget { color: #b7ccdf; font-weight: 600; }
+        QMainWindow#labMainWindow QDockWidget::title { background: #1b2b3e; padding: 7px; }
+        QMainWindow#labMainWindow QDockWidget QLabel, QMainWindow#labMainWindow QDockWidget QCheckBox { color: #c7d6e6; }
+        QMainWindow#labMainWindow QDockWidget QComboBox, QMainWindow#labMainWindow QDockWidget QAbstractSpinBox {
+            background: #203044; color: #e4eef8; border: 1px solid #3b526b; border-radius: 3px; padding: 3px;
+        }
+        QMainWindow#labMainWindow QDockWidget QComboBox QAbstractItemView { background: #203044; color: #e4eef8; selection-background-color: #355d70; }
+        QMainWindow#labMainWindow QDockWidget QLabel:disabled, QMainWindow#labMainWindow QDockWidget QCheckBox:disabled,
+        QMainWindow#labMainWindow QDockWidget QComboBox:disabled, QMainWindow#labMainWindow QDockWidget QAbstractSpinBox:disabled { color: #74869a; }
+        QMainWindow#labMainWindow QMenuBar, QMainWindow#labMainWindow QMenu, QMainWindow#labMainWindow QStatusBar { background: #152132; color: #dce7f3; }
+        QMainWindow#labMainWindow QMenuBar::item:selected, QMainWindow#labMainWindow QMenu::item:selected { background: #355d70; }
+        QMainWindow#labMainWindow QTabWidget::pane { border: 1px solid #30475f; }
+        QMainWindow#labMainWindow QTabBar::tab { background: #152132; color: #a6b9cf; padding: 9px 14px; border-bottom: 2px solid transparent; }
+        QMainWindow#labMainWindow QTabBar::tab:selected { background: #203044; color: #e4eef8; border-bottom-color: #77cfc5; }
+        QMainWindow#labMainWindow QTabBar::tab:hover { color: white; background: #263c52; }
+    )"));
+    // These legacy controls cache the application palette in a local stylesheet
+    // when constructed. Let them inherit this workspace's contrast instead.
+    for (auto spin : findChildren<SiSpinBox*>())
+        spin->setStyleSheet(QString());
+
+    auto central = new QWidget(this);
+    auto layout = new QVBoxLayout(central);
+    layout->setContentsMargins(8, 8, 8, 8);
+    workspaceHint = new QLabel(central);
+    workspaceHint->setObjectName("labWorkspaceHint");
+    workspaceHint->setTextFormat(Qt::PlainText);
+    workspaceHint->setWordWrap(true);
+    workspaceHint->setStyleSheet("color: #a6b9cf; padding: 2px 4px 6px 4px;");
+    layout->addWidget(workspaceHint);
+    workspace = new QTabWidget(central);
+    workspace->setObjectName("labWorkspace");
+    workspace->setDocumentMode(true);
+    workspace->tabBar()->setDrawBase(false);
+    layout->addWidget(workspace, 1);
+
+    // Embed the actual workbench, not a second view or a copy of its state.
+    captureDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
+    captureDock->setAllowedAreas(Qt::NoDockWidgetArea);
+    captureDock->toggleViewAction()->setVisible(false);
+    captureDock->toggleViewAction()->setEnabled(false);
+    captureDock->setTitleBarWidget(new QWidget(captureDock));
+    captureDock->setEmbedded();
+    workspace->addTab(captureDock, tr("Capture Lab"));
+    workspace->setTabToolTip(0, tr("History, references, measurements, masks and recording. Browsing never stops acquisition."));
+
+    auto livePage = new QWidget(workspace);
+    livePage->setObjectName("labLiveScopePage");
+    auto liveLayout = new QVBoxLayout(livePage);
+    liveLayout->setContentsMargins(0, 0, 0, 0);
+    auto scopeTools = new QToolBar(tr("Live scope display"), livePage);
+    scopeTools->setObjectName("labScopeTools");
+    scopeTools->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    for (auto action : {ui->actionPhosphor, ui->actionHistogram, ui->actionZoom, ui->actionMeasure}) {
+        scopeTools->addAction(action);
+        connect(action, &QAction::triggered, this, [this] { workspace->setCurrentIndex(1); });
+    }
+    liveLayout->addWidget(scopeTools);
+    liveLayout->addWidget(dsoWidget, 1);
+    workspace->addTab(livePage, tr("Live scope / FFT"));
+    workspace->setTabToolTip(1, tr("Original acquisition display: trigger sliders, FFT, XY, phosphor and scope cursors."));
+    setCentralWidget(central);
+    auto activity = new QLabel(captureDock->activitySummary(), this);
+    activity->setObjectName("labWorkspaceActivity");
+    activity->setTextFormat(Qt::PlainText);
+    activity->setWordWrap(true);
+    activity->setToolTip(tr("History retention and RAM logging continue on either tab when enabled. Export the log to keep it; switching views never saves it."));
+    activity->setStyleSheet("color: #c7d6e6; padding: 4px 8px;");
+    statusBar()->addPermanentWidget(activity, 1);
+    connect(captureDock, &Lab::CaptureDock::activityChanged, activity, &QLabel::setText);
+
+    auto captureAction = new QAction(tr("Capture Lab"), this);
+    captureAction->setObjectName("labShowCapture");
+    captureAction->setShortcuts({QKeySequence("Ctrl+1"), QKeySequence("Ctrl+H")});
+    connect(captureAction, &QAction::triggered, this, [this] { workspace->setCurrentIndex(0); });
+    auto scopeAction = new QAction(tr("Live scope / FFT"), this);
+    scopeAction->setObjectName("labShowScope");
+    scopeAction->setShortcut(QKeySequence("Ctrl+2"));
+    connect(scopeAction, &QAction::triggered, this, [this] { workspace->setCurrentIndex(1); });
+    ui->menuView->addSeparator();
+    ui->menuView->addAction(captureAction);
+    ui->menuView->addAction(scopeAction);
+    auto resetLayout = ui->menuView->addAction(tr("Reset workspace layout"));
+    resetLayout->setObjectName("labResetLayout");
+    connect(resetLayout, &QAction::triggered, this, [this] {
+        restoreState(defaultWorkspaceState, workspaceLayoutVersion);
+        workspace->setCurrentIndex(0);
+    });
+    connect(workspace, &QTabWidget::currentChanged, this, [this](int page) {
+        workspaceHint->setText(page == 0
+            ? tr("Analyze displayed captures · Browsing history does not stop acquisition. Controls on the right change the incoming signal, not saved captures.")
+            : tr("Live acquisition display · Trigger level and position are set on this view. History and logging continue here when enabled."));
+    });
+    // currentChanged was connected after adding the first page.
+    workspaceHint->setText(tr("Analyze displayed captures · Browsing history does not stop acquisition. Controls on the right change the incoming signal, not saved captures."));
+
+    ui->toolBar->clear();
+    addToolBar(Qt::TopToolBarArea, ui->toolBar);
+    ui->toolBar->setWindowTitle(tr("Acquisition"));
+    ui->toolBar->setMovable(false);
+    ui->toolBar->toggleViewAction()->setVisible(false);
+    ui->toolBar->toggleViewAction()->setEnabled(false);
+    ui->toolBar->setAllowedAreas(Qt::TopToolBarArea);
+    ui->toolBar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    auto brand = new QLabel(tr("OpenHantek Lab"), ui->toolBar);
+    brand->setStyleSheet("color: #dce7f3; font-size: 17px; font-weight: 600; padding: 0 12px 0 4px;");
+    ui->toolBar->addWidget(brand);
+    acquisitionBadge = new QLabel(ui->toolBar);
+    acquisitionBadge->setObjectName("labAcquisitionBadge");
+    acquisitionBadge->setTextFormat(Qt::PlainText);
+    acquisitionBadge->setToolTip(tr("Acquisition state reported by the scope controller. This is independent of the capture-browser state. RUNNING does not promise continuous or gapless data."));
+    ui->toolBar->addWidget(acquisitionBadge);
+    ui->toolBar->addSeparator();
+    ui->toolBar->addAction(ui->actionSampling);
+    auto single = new QAction(tr("Single"), this);
+    single->setObjectName("labSingleCapture");
+    single->setToolTip(tr("Switch to SINGLE trigger mode and arm a fresh acquisition. Uses the current trigger source, slope and level. Repeat to rearm."));
+    single->setVisible(std::find(control->getModel()->spec()->triggerModes.begin(),
+                                control->getModel()->spec()->triggerModes.end(), Dso::TriggerMode::SINGLE)
+                       != control->getModel()->spec()->triggerModes.end());
+    ui->toolBar->addAction(single);
+    ui->toolBar->addAction(ui->actionRefresh);
+    connect(this, &MainWindow::singleCaptureRequested, control, [control] { control->enableSamplingUI(true); });
+    connect(single, &QAction::triggered, this, [this, triggerDock] {
+        dsoSettings->scope.trigger.mode = Dso::TriggerMode::SINGLE;
+        // Keep the existing modeChanged connections (including queued controller
+        // updates) in order before arming. Never call controller methods across threads.
+        triggerDock->setMode(Dso::TriggerMode::SINGLE);
+        emit singleCaptureRequested();
+    });
+    auto spacer = new QWidget(ui->toolBar);
+    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    ui->toolBar->addWidget(spacer);
+    ui->toolBar->addAction(ui->actionSettings);
+    updateAcquisitionStatus();
+}
+
+
+void MainWindow::updateAcquisitionStatus() {
+    const bool running = deviceAvailable && samplingActive;
+    const bool single = dsoSettings->scope.trigger.mode == Dso::TriggerMode::SINGLE;
+    const auto state = !deviceAvailable ? tr("DISCONNECTED") : !running ? tr("STOPPED")
+        : single ? tr("SINGLE ARMED") : tr("RUNNING");
+    acquisitionBadge->setText((demoDevice ? tr("DEMO") : tr("SCOPE")) + "  ·  " + state);
+    acquisitionBadge->setStyleSheet(QString("color: %1; background: #243d50; border-radius: 5px; padding: 7px 12px;")
+        .arg(!deviceAvailable ? "#ffb0b0" : running ? "#a5efd0" : "#ecd09d"));
+    QSignalBlocker blocker(ui->actionSampling);
+    ui->actionSampling->setChecked(running);
+    ui->actionSampling->setIcon(running ? iconPause : iconPlay);
+    ui->actionSampling->setText(running ? tr("Stop") : single ? tr("Rearm") : tr("Run"));
+    ui->actionSampling->setToolTip(!deviceAvailable ? tr("Oscilloscope unavailable. Saved captures remain available.")
+        : running ? tr("Stop acquisition. History, references and the library are retained.")
+        : single ? tr("Rearm SINGLE for a fresh capture. Change the trigger mode to Auto to run continuously.")
+        : tr("Run acquisition with the current trigger settings."));
+    ui->actionSampling->setStatusTip(ui->actionSampling->toolTip());
+}
+
+
+void MainWindow::restoreWorkspaceLayout() {
+    // The old dock layout hid Capture Lab; it is not a compatible workspace
+    // layout. Leave its stored bytes untouched until the user normally saves.
+    if (!restoreState(dsoSettings->mainWindowState, workspaceLayoutVersion))
+        restoreState(defaultWorkspaceState, workspaceLayoutVersion);
+    // Acquisition status and Stop must never disappear with an imported layout.
+    addToolBar(Qt::TopToolBarArea, ui->toolBar);
+    ui->toolBar->show();
+}
+
+
 MainWindow::~MainWindow() {
     if ( dsoSettings->scope.verboseLevel > 1 )
         qDebug() << " MainWindow::~MainWindow()";
@@ -593,6 +794,9 @@ void MainWindow::exporterProgressChanged() {
 
 void MainWindow::deviceConnectionStateChanged( DeviceConnectionState state, const QString &message ) {
     const bool available = state == DeviceConnectionState::Connected;
+    deviceAvailable = available;
+    if (!available)
+        samplingActive = false;
 
     setDeviceCommandUiEnabled( available );
 
@@ -612,6 +816,7 @@ void MainWindow::deviceConnectionStateChanged( DeviceConnectionState state, cons
 
     if ( !message.isEmpty() )
         statusBar()->showMessage( message, available ? 3000 : 0 );
+    updateAcquisitionStatus();
 }
 
 
@@ -639,7 +844,7 @@ void MainWindow::setDeviceCommandUiEnabled( bool enabled ) {
 void MainWindow::screenShot( screenshotType_t screenshotType, bool autoSafe ) {
     if ( dsoSettings->scope.verboseLevel > 2 )
         qDebug() << "  MainWindow::screenShot()" << screenshotType << autoSafe;
-    auto activeWindow = screenshotType == SCREENSHOT ? qApp->activeWindow() : dsoWidget;
+    QWidget *activeWindow = screenshotType == SCREENSHOT ? this : static_cast<QWidget*>(dsoWidget);
     QPixmap screenshot( activeWindow->size() ); // prepare a pixmap with the correct size
     int sw = screenshot.width();
     int sh = screenshot.height();
@@ -773,7 +978,7 @@ void MainWindow::closeEvent( QCloseEvent *event ) {
         qDebug() << "  MainWindow::closeEvent()";
     if ( dsoSettings->alwaysSave ) {
         dsoSettings->mainWindowGeometry = saveGeometry();
-        dsoSettings->mainWindowState = saveState();
+        dsoSettings->mainWindowState = saveState(workspaceLayoutVersion);
         dsoSettings->save();
     }
     QMainWindow::closeEvent( event );

@@ -255,12 +255,13 @@ CaptureDock::CaptureDock(const DsoSettings *settings, QWidget *parent)
     layout->setContentsMargins(12,10,12,10); layout->setSpacing(8);
     auto controls=new QHBoxLayout;
     auto title=new QLabel(tr("Capture Lab"),body); title->setStyleSheet("color: #dce7f3; font-size: 16px; font-weight: 600; padding-right: 12px;");
+    title->setObjectName("labWorkbenchTitle");
     controls->addWidget(title);
     auto button=[&](const QString &text,auto callback) {
         auto b=new QPushButton(text,body); controls->addWidget(b); connect(b,&QPushButton::clicked,this,callback); return b;
     };
     saveButton=button(tr("Save capture…"),[this]{saveCapture();}); saveButton->setObjectName("labSaveCapture");
-    button(tr("Open capture…"),[this]{openCapture();});
+    button(tr("Open capture…"),[this]{openCapture();})->setObjectName("labOpenCapture");
     referenceButton=button(tr("Set reference"),[this]{reference=selected; referenceName=selectedName; resetMask();});
     referenceButton->setObjectName("labSetReference");
     auto library=button(tr("Library…"),[this]{openLibrary();}); library->setObjectName("labLibrary");
@@ -442,6 +443,22 @@ CaptureDock::CaptureDock(const DsoSettings *settings, QWidget *parent)
     connect(this,&QDockWidget::visibilityChanged,this,[this](bool visible){if(visible) refresh();});
     refresh();
 }
+void CaptureDock::setEmbedded() {
+    // The workspace tab supplies the heading. Keep the compact toolbar useful
+    // alongside the live acquisition controls, including on laptop displays.
+    findChild<QLabel*>("labWorkbenchTitle")->hide();
+    findChild<QPushButton*>("labOpenCapture")->hide();
+    auto menu=findChild<QPushButton*>("labMore")->menu();
+    menu->insertAction(menu->actions().front(),new QAction(tr("Open capture…"),menu));
+    connect(menu->actions().front(),&QAction::triggered,this,&CaptureDock::openCapture);
+}
+QString CaptureDock::activitySummary() const {
+    const auto selection=!selected?tr("no capture"):!record->isChecked()?tr("held #%1").arg(selected->tag)
+        :live->isChecked()?tr("following latest"):tr("frozen #%1").arg(selected->tag);
+    return tr("History: %1 · Analysis: %2 · Log: %3 · %4 readings in RAM%5")
+        .arg(record->isChecked()?tr("recording"):tr("paused"),selection,collectLog->isChecked()?tr("collecting"):tr("paused"))
+        .arg(measurementLog.entries().size()).arg(logRevision!=exportedLogRevision?tr(" · UNEXPORTED"):QString());
+}
 void CaptureDock::ingest(const std::shared_ptr<PPresult> &frame) {
     if(!frame) return;
     // Do not copy repeated redraws of a stopped/held acquisition.
@@ -467,6 +484,7 @@ void CaptureDock::ingest(const std::shared_ptr<PPresult> &frame) {
     if(retained) refreshList();
     trend->update();
     if(isVisible()) refresh();
+    else emit activityChanged(activitySummary());
 }
 TimeSpan CaptureDock::measurementSpan() const {
     if(spanMode->currentIndex()==1) return selected?plot->visibleSpan():TimeSpan{1,0};
@@ -503,6 +521,7 @@ void CaptureDock::refreshList() {
     if(live->isChecked()) list->scrollToBottom();
 }
 void CaptureDock::refresh() {
+    emit activityChanged(activitySummary());
     plot->current=selected; plot->reference=reference; plot->align=align->isChecked(); plot->offset=offset->value();
     const auto lanes=selected?std::count_if(selected->channels.begin(),selected->channels.end(),[](const auto &ch){return !ch.signal.samples.empty();}):0;
     plot->setMinimumHeight(std::max(180,30+int(lanes)*74));
