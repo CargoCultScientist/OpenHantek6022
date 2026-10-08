@@ -374,5 +374,7 @@ new-layout restoration, independent browsing/acquisition, background history/log
 disconnect availability, repeated Single arming and queued controller-thread order.
 These checks exposed an existing uninitialized sample-rate target during channel
 setup; it now starts with an explicit no-duration-request state until settings apply.
+They also caught an uninitialized unit in the legacy SI numeric control's
+constructor; formatting now starts with a defined unit before Qt sets its value.
 The integrated GUI check renders both tabs, verifies that a pre-initialization
 capture reaches the actual OpenGL plot, and checks a 1280×800 default workspace.

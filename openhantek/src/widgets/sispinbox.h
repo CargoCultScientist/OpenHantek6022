@@ -33,7 +33,7 @@ class SiSpinBox : public QDoubleSpinBox {
     void init();
     void setBackground();
 
-    Unit unit;             ///< The SI unit used for this spin box
+    Unit unit = UNIT_NONE; ///< Valid before init() invokes virtual formatting
     QString unitPostfix;   ///< Shown after the unit
     QList< double > steps; ///< The steps, begins from start after last element
     int mode;              ///< The mode, fixed or constant

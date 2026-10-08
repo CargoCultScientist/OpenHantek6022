@@ -47,6 +47,7 @@
 #include <QToolBar>
 #include "docks/HorizontalDock.h"
 #include "docks/TriggerDock.h"
+#include "widgets/sispinbox.h"
 
 int verboseLevel = 0;
 
@@ -891,6 +892,16 @@ private slots:
         QTest::mouseClick(plot,Qt::LeftButton,Qt::ShiftModifier,centre.toPoint());
         QCOMPARE(mode->currentIndex(),2); QVERIFY(a->value()>0);
         a->setValue(2);b->setValue(3); QVERIFY(table->item(0,11)->text().contains("No finite samples"));
+    }
+    void spinBoxUnitsInitialized() {
+        SiSpinBox plain;
+        QCOMPARE(plain.textFromValue(1.0),valueToString(1.0,UNIT_NONE,-1));
+        QCOMPARE(plain.text(),plain.textFromValue(plain.value()));
+        for(auto unit:{UNIT_SECONDS,UNIT_SAMPLES,UNIT_VOLTS,UNIT_HERTZ}) {
+            SiSpinBox spin(unit);
+            QCOMPARE(spin.textFromValue(1.0),valueToString(1.0,unit,-1));
+            QCOMPARE(spin.text(),spin.textFromValue(spin.value()));
+        }
     }
     void samplerateTargetsInitialized() {
         ScopeDevice device; DsoSettings settings(&device);

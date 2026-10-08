@@ -38,8 +38,8 @@ SiSpinBox::SiSpinBox( QWidget *parent ) : QDoubleSpinBox( parent ) { init(); }
 /// \param unit The unit shown for the value in the spin box.
 /// \param parent The parent widget.
 SiSpinBox::SiSpinBox( Unit unit, QWidget *parent ) : QDoubleSpinBox( parent ) {
-    init();
     setUnit( unit );
+    init(); // setValue()/setDecimals() can already call textFromValue().
     setBackground();
 }
 
