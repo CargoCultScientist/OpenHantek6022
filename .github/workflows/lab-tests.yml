@@ -5,6 +5,9 @@ on:
   pull_request:
 permissions:
   contents: read
+concurrency:
+  group: lab-tests-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   regression:
     runs-on: ubuntu-24.04

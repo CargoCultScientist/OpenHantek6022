@@ -1078,7 +1078,17 @@ private slots:
             hardcopy->trigger();
             QTRY_COMPARE(QDir(exports.path()).entryList({"*.png"},QDir::Files).size(),1);
             const auto file=QDir(exports.path()).entryList({"*.png"},QDir::Files).front();
-            QVERIFY(!QImage(exports.filePath(file)).isNull());
+            const QImage hardcopyImage(exports.filePath(file)); QVERIFY(!hardcopyImage.isNull());
+            QVERIFY(hardcopyImage.save(qEnvironmentVariable("OH_GUI_SCREENSHOT")+".hardcopy.png"));
+            int tracePixels=0;
+            // Ignore outer labels/controls; CH1 is yellow (or darker olive in
+            // print colours). A valid file with an empty GL canvas is not enough.
+            for(int y=hardcopyImage.height()/8;y<7*hardcopyImage.height()/8;++y)
+                for(int x=hardcopyImage.width()/8;x<7*hardcopyImage.width()/8;++x) {
+                    const auto color=hardcopyImage.pixelColor(x,y);
+                    if(color.red()>60 && color.green()>60 && std::abs(color.red()-color.green())<40 && color.blue()<60) ++tracePixels;
+                }
+            QVERIFY2(tracePixels>100,"The saved live-scope hardcopy has no CH1 waveform");
             QCOMPARE(workspace->currentIndex(),1);
             QCOMPARE(settings.view.colors,&settings.view.screen);
             QCOMPARE(dock->findChild<QListWidget*>("labCaptureList")->count(),3);
