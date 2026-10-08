@@ -25,6 +25,7 @@
 #include "post/postprocessing.h"
 #include "post/graphgenerator.h"
 #include "mainwindow.h"
+#include "dsowidget.h"
 #include "glscope.h"
 #include <QListWidget>
 #include <QTableWidget>
@@ -45,9 +46,11 @@
 #include <QDialogButtonBox>
 #include <QLockFile>
 #include <QToolBar>
+#include <QButtonGroup>
 #include "docks/HorizontalDock.h"
 #include "docks/TriggerDock.h"
 #include "widgets/sispinbox.h"
+#include "widgets/datagrid.h"
 
 int verboseLevel = 0;
 
@@ -901,6 +904,82 @@ private slots:
             SiSpinBox spin(unit);
             QCOMPARE(spin.textFromValue(1.0),valueToString(1.0,unit,-1));
             QCOMPARE(spin.text(),spin.textFromValue(spin.value()));
+        }
+    }
+    void levelSliderLifecycle() {
+        struct TestSlider : LevelSlider {
+            using LevelSlider::LevelSlider;
+            using LevelSlider::pressedSlider;
+        };
+        for(auto direction:{Qt::UpArrow,Qt::DownArrow,Qt::LeftArrow,Qt::RightArrow}) {
+            TestSlider slider(direction);
+            QCOMPARE(slider.direction(),direction);
+            QVERIFY(slider.preMargin()>0); QVERIFY(slider.postMargin()>0);
+            QVERIFY(slider.sizeHint().isValid());
+            QCOMPARE(slider.removeSlider(),-1);
+            QCOMPARE(slider.addSlider("invalid",1),-1);
+            QCOMPARE(slider.addSlider("first"),0);
+            QCOMPARE(slider.step(0),1.0);
+            slider.setValue(0,42); QCOMPARE(slider.value(0),42.0);
+            QCOMPARE(slider.addSlider("second"),1);
+            slider.pressedSlider=1;
+            QCOMPARE(slider.addSlider("inserted",0),0);
+            QCOMPARE(slider.pressedSlider,2);
+            QCOMPARE(slider.removeSlider(0),0);
+            QCOMPARE(slider.pressedSlider,1);
+            QCOMPARE(slider.removeSlider(2),-1);
+            QCOMPARE(slider.removeSlider(0),0);
+            QCOMPARE(slider.pressedSlider,0);
+            QCOMPARE(slider.text(0),QString("second"));
+            QCOMPARE(slider.removeSlider(),0);
+            QCOMPARE(slider.pressedSlider,-1);
+            QCOMPARE(slider.removeSlider(),-1);
+            QCOMPARE(slider.addSlider("owned until destruction"),0);
+        }
+        LevelSlider fallback(Qt::NoArrow);
+        QCOMPARE(fallback.direction(),Qt::RightArrow);
+        QCOMPARE(fallback.setDirection(Qt::NoArrow),-1);
+        QCOMPARE(fallback.direction(),Qt::RightArrow);
+    }
+    void scopeWidgetLifecycle() {
+        ScopeDevice device; DsoSettings settings(&device); settings.alwaysSave=false;
+        settings.scope.horizontal.samplerate=2000000;
+        settings.scope.horizontal.timebase=.002;
+        settings.view.cursorsVisible=false;
+        for(bool rateFirst:{true,false}) {
+            QPointer<DataGrid> grid;
+            QPointer<QButtonGroup> group;
+            QList<QPointer<QPushButton>> buttons;
+            QList<QPointer<LevelSlider>> sliders;
+            {
+                DsoWidget widget(&settings.scope,&settings.view,device.getModel()->spec());
+                if(rateFirst) widget.updateSamplerate(1000000);
+                else widget.updateTimebase(.001);
+                QCOMPARE(settings.scope.horizontal.dotsOnScreen,20000);
+                grid=widget.findChild<DataGrid*>(); QVERIFY(grid);
+                QCOMPARE(grid->parentWidget(),&widget); QVERIFY(grid->isHidden());
+                group=grid->findChild<QButtonGroup*>(); QVERIFY(group);
+                for(auto button:grid->findChildren<QPushButton*>()) buttons.append(button);
+                QCOMPARE(buttons.size(),2*(1+int(settings.scope.voltage.size()+settings.scope.spectrum.size())));
+                for(auto slider:widget.findChildren<LevelSlider*>()) sliders.append(slider);
+                QCOMPARE(sliders.size(),8);
+                for(auto side:{Qt::LeftToolBarArea,Qt::RightToolBarArea}) {
+                    settings.view.cursorGridPosition=side;
+                    widget.updateCursorGrid(true);
+                    QVERIFY(!grid->isHidden()); QVERIFY(widget.layout()->indexOf(grid)>=0);
+                    QCOMPARE(grid->parentWidget(),&widget);
+                    auto layout=qobject_cast<QGridLayout*>(widget.layout()); QVERIFY(layout);
+                    int row,column,rowSpan,columnSpan;
+                    layout->getItemPosition(layout->indexOf(grid),&row,&column,&rowSpan,&columnSpan);
+                    QCOMPARE(column,side==Qt::LeftToolBarArea?0:layout->columnCount()-1);
+                }
+                widget.updateCursorGrid(false);
+                QVERIFY(grid->isHidden()); QCOMPARE(widget.layout()->indexOf(grid),-1);
+                QCOMPARE(grid->parentWidget(),&widget);
+            }
+            QVERIFY(grid.isNull()); QVERIFY(group.isNull());
+            for(const auto &button:buttons) QVERIFY(button.isNull());
+            for(const auto &slider:sliders) QVERIFY(slider.isNull());
         }
     }
     void samplerateTargetsInitialized() {

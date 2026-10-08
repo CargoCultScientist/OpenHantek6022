@@ -27,7 +27,8 @@
 
 DsoWidget::DsoWidget( DsoSettingsScope *scope, DsoSettingsView *view, const Dso::ControlSpecification *spec, QWidget *parent )
     : QWidget( parent ), scope( scope ), view( view ), spec( spec ), mainScope( GlScope::createNormal( scope, view ) ),
-      zoomScope( GlScope::createZoomed( scope, view ) ) {
+      zoomScope( GlScope::createZoomed( scope, view ) ), samplerate( scope->horizontal.samplerate ),
+      timebase( scope->horizontal.timebase ) {
 
     if ( scope->verboseLevel > 1 )
         qDebug() << " DsoWidget::DsoWidget()";
@@ -301,6 +302,7 @@ DsoWidget::DsoWidget( DsoSettingsScope *scope, DsoSettingsView *view, const Dso:
         zoomScope->updateCursor();
     } );
     zoomSliders.markerSlider->setEnabled( false );
+    zoomSliders.markerSlider->hide();
 }
 
 
@@ -383,7 +385,8 @@ void DsoWidget::setColors() {
 void DsoWidget::updateCursorGrid( bool enabled ) {
     if ( !enabled ) {
         cursorDataGrid->selectItem( 0 );
-        cursorDataGrid->setParent( nullptr );
+        mainLayout->removeWidget( cursorDataGrid );
+        cursorDataGrid->hide();
         mainScope->selectCursor( 0 );
         zoomScope->selectCursor( 0 );
         return;
@@ -396,22 +399,23 @@ void DsoWidget::updateCursorGrid( bool enabled ) {
     case Qt::LeftToolBarArea:
         // keep space for settingsLayout on top and measurementLayout on bottom
         if ( mainLayout->itemAtPosition( mainScopeRow, leftColumn ) == nullptr ) {
-            cursorDataGrid->setParent( nullptr );
+            mainLayout->removeWidget( cursorDataGrid );
             mainLayout->addWidget( cursorDataGrid, mainScopeRow, leftColumn, rows, 1 );
         }
+        cursorDataGrid->show();
         break;
     case Qt::RightToolBarArea:
         // keep space for settingsLayout on top and measurementLayout on bottom
         if ( mainLayout->itemAtPosition( mainScopeRow, rightColumn ) == nullptr ) {
-            cursorDataGrid->setParent( nullptr );
+            mainLayout->removeWidget( cursorDataGrid );
             // right of main and zoom, from mainScope down to (excluding) measurementLayout
             mainLayout->addWidget( cursorDataGrid, mainScopeRow, rightColumn, rows, 1 );
         }
+        cursorDataGrid->show();
         break;
     default:
-        if ( cursorDataGrid->parent() != nullptr ) {
-            cursorDataGrid->setParent( nullptr );
-        }
+        mainLayout->removeWidget( cursorDataGrid );
+        cursorDataGrid->hide();
         break;
     }
 }
@@ -449,7 +453,7 @@ void DsoWidget::setupSliders( DsoWidget::Sliders &sliders ) {
     if ( scope->verboseLevel > 2 )
         qDebug() << "  DsoWidget::setupSliders()";
     // The offset sliders for all possible channels
-    sliders.voltageOffsetSlider = new LevelSlider( Qt::RightArrow );
+    sliders.voltageOffsetSlider = new LevelSlider( Qt::RightArrow, this );
     if ( scope->toolTipVisible )
         sliders.voltageOffsetSlider->setToolTip( tr( "Trace position, drag the channel name up or down" ) );
     for ( ChannelID channel = 0; channel < scope->voltage.size(); ++channel ) {
@@ -471,7 +475,7 @@ void DsoWidget::setupSliders( DsoWidget::Sliders &sliders ) {
     }
 
     // The triggerPosition slider
-    sliders.triggerPositionSlider = new LevelSlider( Qt::DownArrow );
+    sliders.triggerPositionSlider = new LevelSlider( Qt::DownArrow, this );
     if ( scope->toolTipVisible )
         sliders.triggerPositionSlider->setToolTip( tr( "Trigger position, drag the arrow left or right" ) );
     sliders.triggerPositionSlider->addSlider();
@@ -481,7 +485,7 @@ void DsoWidget::setupSliders( DsoWidget::Sliders &sliders ) {
     sliders.triggerPositionSlider->setIndexVisible( 0, true );
 
     // The sliders for the trigger levels
-    sliders.triggerLevelSlider = new LevelSlider( Qt::LeftArrow );
+    sliders.triggerLevelSlider = new LevelSlider( Qt::LeftArrow, this );
     if ( scope->toolTipVisible )
         sliders.triggerLevelSlider->setToolTip( tr( "Trigger level, drag the arrow up or down" ) );
     for ( ChannelID channel = 0; channel < scope->voltage.size(); ++channel ) {
@@ -495,7 +499,7 @@ void DsoWidget::setupSliders( DsoWidget::Sliders &sliders ) {
     }
 
     // The marker slider
-    sliders.markerSlider = new LevelSlider( Qt::UpArrow );
+    sliders.markerSlider = new LevelSlider( Qt::UpArrow, this );
     if ( scope->toolTipVisible )
         sliders.markerSlider->setToolTip( tr( "Measure or zoom marker '1' and '2', drag left or right" ) );
     for ( int marker = 0; marker < 2; ++marker ) {

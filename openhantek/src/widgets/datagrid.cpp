@@ -10,7 +10,7 @@
 DataGrid::DataGrid( QWidget *parent ) : QGroupBox( parent ) {
     cursorsLayout = new QGridLayout();
     cursorsLayout->setSpacing( 5 );
-    cursorsSelectorGroup = new QButtonGroup();
+    cursorsSelectorGroup = new QButtonGroup( this );
     cursorsSelectorGroup->setExclusive( true );
 
 #if ( QT_VERSION >= QT_VERSION_CHECK( 5, 15, 0 ) )
@@ -113,6 +113,11 @@ int DataGrid::addItem( const QString &text, const QColor &fgColor ) {
     cursorsLayout->addWidget( info.selector, 3 * index, 0 );
     if ( index ) // no ON/OFF button for markers
         cursorsLayout->addWidget( info.onOff, 3 * index, 1 );
+    else {
+        // updateInfo still uses this button, even though markers have no switch.
+        info.onOff->setParent( this );
+        info.onOff->hide();
+    }
     cursorsLayout->addWidget( info.deltaXLabel, 3 * index + 1, 0 );
     cursorsLayout->addWidget( info.deltaYLabel, 3 * index + 1, 1 );
     cursorsLayout->setRowMinimumHeight( 3 * index + 2, 10 );

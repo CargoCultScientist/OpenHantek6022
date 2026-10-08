@@ -41,12 +41,13 @@ LevelSlider::LevelSlider( Qt::ArrowType direction, QWidget *parent ) : QWidget( 
 
     pressedSlider = -1;
 
+    if ( setDirection( direction ) < 0 )
+        setDirection( Qt::RightArrow );
     calculateWidth();
-    setDirection( direction );
 }
 
 /// \brief Cleans up the widget.
-LevelSlider::~LevelSlider() {}
+LevelSlider::~LevelSlider() { qDeleteAll( slider ); }
 
 /// \brief Return the margin before the slider.
 /// \return The margin the Slider has at the top/left.
@@ -57,22 +58,23 @@ int LevelSlider::preMargin() const { return _preMargin; }
 int LevelSlider::postMargin() const { return _postMargin; }
 
 /// \brief Add a new slider to the slider container.
-/// \param index The index where the slider should be inserted, 0 to append.
+/// \param index The index where the slider should be inserted, -1 to append.
 /// \return The index of the slider, -1 on error.
 int LevelSlider::addSlider( int index ) { return addSlider( "", index ); }
 
 /// \brief Add a new slider to the slider container.
 /// \param text The text that will be shown next to the slider.
-/// \param index The index where the slider should be inserted, 0 to append.
+/// \param index The index where the slider should be inserted, -1 to append.
 /// \return The index of the slider, -1 on error.
 int LevelSlider::addSlider( const QString &text, int index ) {
-    if ( index < -1 )
+    if ( index < -1 || index > slider.count() )
         return -1;
 
     LevelSliderParameters *parameters = new LevelSliderParameters;
     parameters->color = Qt::white;
     parameters->minimum = 0x00;
     parameters->maximum = 0xff;
+    parameters->step = 1.0;
     parameters->value = 0x00;
     parameters->visible = false;
 
@@ -81,6 +83,9 @@ int LevelSlider::addSlider( const QString &text, int index ) {
         index = slider.count() - 1;
     } else
         slider.insert( index, parameters );
+
+    if ( pressedSlider >= index )
+        ++pressedSlider;
 
     setText( index, text );
 
@@ -91,17 +96,19 @@ int LevelSlider::addSlider( const QString &text, int index ) {
 /// \param index The index of the slider that should be removed.
 /// \return The index of the removed slider, -1 on error.
 int LevelSlider::removeSlider( int index ) {
-    if ( index < -1 )
+    if ( index < -1 || index >= slider.count() || slider.isEmpty() )
         return -1;
 
-    if ( index == -1 ) {
-        slider.removeLast();
-        index = slider.count();
-    } else {
-        slider.removeAt( index );
-    }
+    if ( index == -1 )
+        index = slider.count() - 1;
+    delete slider.takeAt( index );
+    if ( pressedSlider == index )
+        pressedSlider = -1;
+    else if ( pressedSlider > index )
+        --pressedSlider;
 
     calculateWidth();
+    update();
 
     return index;
 }
