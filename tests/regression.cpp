@@ -46,12 +46,14 @@
 #include <QDialogButtonBox>
 #include <QLockFile>
 #include <QToolBar>
+#include <QToolTip>
 #include <QButtonGroup>
 #include "docks/HorizontalDock.h"
 #include "docks/TriggerDock.h"
 #include "docks/VoltageDock.h"
 #include "widgets/sispinbox.h"
 #include "widgets/datagrid.h"
+#include "configdialog/configdialog.h"
 
 int verboseLevel = 0;
 
@@ -510,6 +512,42 @@ private slots:
             QTest::qWait(100);
             QVERIFY(dock.grab().save(qEnvironmentVariable("OH_CAPTURE_SCREENSHOT")));
         }
+    }
+    void captureBrowserReusesRows() {
+        ScopeDevice device; DsoSettings settings(&device);
+        Lab::CaptureDock dock(&settings); dock.resize(1500,650); dock.show();
+        auto list=dock.findChild<QListWidget*>("labCaptureList");
+        auto table=dock.findChild<QTableWidget*>("labMeasurements");
+        auto frame=std::make_shared<PPresult>(3); frame->tag=1; frame->capturedAtMs=1000;
+        auto data=frame->modifiableData(0); data->voltage.interval=1e-6;
+        for(int i=0;i<1000;++i) data->voltage.samples.push_back(std::sin(2*M_PI*i/100));
+        dock.ingest(frame);
+        const QPersistentModelIndex firstIndex(list->model()->index(0,0));
+        auto firstItem=list->item(0); auto firstMeasurement=table->item(0,1);
+        dock.findChild<QPushButton*>("labSetReference")->click();
+        frame=std::make_shared<PPresult>(*frame); ++frame->tag; frame->capturedAtMs+=100;
+        for(auto &v:frame->modifiableData(0)->voltage.samples) v+=.5;
+        dock.ingest(frame);
+        QCOMPARE(list->item(0),firstItem); QVERIFY(firstIndex.isValid());
+        QCOMPARE(table->item(0,1),firstMeasurement);
+        QVERIFY(std::abs(stringToValue(table->item(0,9)->text(),UNIT_VOLTS)-.5)<1e-8);
+        dock.findChild<QCheckBox*>("labFollowLatest")->setChecked(false);
+        const auto frozen=table->item(0,0)->text();
+        for(int i=0;i<130;++i) {
+            frame=std::make_shared<PPresult>(*frame); ++frame->tag; frame->capturedAtMs+=100;
+            dock.ingest(frame);
+        }
+        QCOMPARE(list->count(),128); QVERIFY(!firstIndex.isValid());
+        QCOMPARE(table->item(0,1),firstMeasurement); QCOMPARE(table->item(0,0)->text(),frozen);
+        // The reference is now evicted from history and only the pin owns it.
+        // Clearing it must invalidate differences even after the cache's weak pointer expires.
+        dock.findChild<QPushButton*>("labClearReference")->click();
+        QCOMPARE(table->item(0,9)->text(),QString::fromUtf8("—"));
+        auto span=dock.findChild<QComboBox*>("labMeasurementSpan");
+        dock.findChild<QDoubleSpinBox*>("labCursorA")->setValue(2);
+        dock.findChild<QDoubleSpinBox*>("labCursorB")->setValue(3);
+        span->setCurrentIndex(2); QVERIFY(table->item(0,11)->text().contains("No finite samples"));
+        span->setCurrentIndex(0); QCOMPARE(table->item(0,1)->text(),QString("2.0000 V"));
     }
     void measurementLogSegmentsAndCsv() {
         Lab::Capture frame; frame.tag=1; frame.capturedAtMs=1000;
@@ -1075,6 +1113,58 @@ private slots:
             QVERIFY(control.singleCapture.current()>applied);
         }
     }
+    void stoppedDisplayIsEventDriven() {
+        ScopeDevice device; DsoSettings settings(&device); settings.alwaysSave=false;
+        settings.scope.trigger.mode=Dso::TriggerMode::SINGLE;
+        HantekDsoControl control(&device,device.getModel(),0); control.applySettings(&settings.scope);
+        control.stateMachineRunning=false; control.enableSamplingUI(false);
+        control.hasDisplayData=true; control.result.tag=23; control.result.samplerate=1e6;
+        control.result.data={{0,1,0,-1},{0,.5,0,-.5},{}};
+        QSignalSpy frames(&control,&HantekDsoControl::samplesAvailable);
+        const auto arm=control.singleCapture.current();
+        for(int i=0;i<500;++i) control.stateMachine();
+        QCOMPARE(frames.size(),0); QCOMPARE(control.acquireInterval,100);
+        control.requestDisplayRefresh(); control.requestDisplayRefresh(); control.stateMachine();
+        QCOMPARE(frames.size(),1); QCOMPARE(control.singleCapture.current(),arm);
+        auto result=qvariant_cast<std::shared_ptr<const DSOsamples>>(frames.back().front());
+        QCOMPARE(result->tag,23u); QCOMPARE(result->data[0].size(),size_t(4));
+        for(int i=0;i<500;++i) control.stateMachine();
+        QCOMPARE(frames.size(),1);
+        // Stop must still deliver a new frame that was waiting for its display deadline.
+        control.displayPending=true; control.stateMachine(); QCOMPARE(frames.size(),2);
+        control.stateMachine(); QCOMPARE(frames.size(),2);
+        HantekDsoControl empty(&device,device.getModel(),0); empty.applySettings(&settings.scope);
+        empty.stateMachineRunning=false; empty.enableSamplingUI(false);
+        QSignalSpy emptyFrames(&empty,&HantekDsoControl::samplesAvailable);
+        empty.requestDisplayRefresh(); for(int i=0;i<5;++i) empty.stateMachine();
+        QCOMPARE(emptyFrames.size(),0); // No fabricated startup acquisition.
+        qInfo("Idle processing: 1000 unchanged stopped ticks produced 0 extra frames; explicit refreshes coalesced.");
+    }
+    void heldDisplayControlsRequestRefresh() {
+        ScopeDevice device; DsoSettings settings(&device); settings.alwaysSave=false;
+        HantekDsoControl control(&device,device.getModel(),0); control.applySettings(&settings.scope);
+        ExporterRegistry registry(device.getModel()->spec(),&settings);
+        MainWindow window(&control,&settings,&registry);
+        control.setTriggerMode(Dso::TriggerMode::SINGLE); control.enableSamplingUI(false);
+        const auto arm=control.singleCapture.current();
+        control.displayRefreshRequested=false;
+        auto horizontal=window.findChild<HorizontalDock*>(); QVERIFY(horizontal);
+        settings.scope.horizontal.timebase=.002; emit horizontal->timebaseChanged(.002);
+        QVERIFY(control.displayRefreshRequested);
+        for(const auto name:{"actionHistogram","actionPhosphor"}) {
+            auto action=window.findChild<QAction*>(name); QVERIFY(action);
+            control.displayRefreshRequested=false; action->setChecked(!action->isChecked());
+            QVERIFY(control.displayRefreshRequested);
+        }
+        auto scope=window.findChild<DsoWidget*>(); QVERIFY(scope);
+        control.displayRefreshRequested=false; emit scope->voltageOffsetChanged(0,1.0);
+        QVERIFY(control.displayRefreshRequested);
+        auto settingsAction=window.findChild<QAction*>("actionSettings"); QVERIFY(settingsAction); settingsAction->trigger();
+        auto dialog=window.findChild<DsoConfigDialog*>(); QVERIFY(dialog);
+        control.displayRefreshRequested=false; dialog->apply(); QVERIFY(control.displayRefreshRequested);
+        dialog->reject();
+        QCOMPARE(control.singleCapture.current(),arm); QVERIFY(!control.isSamplingUI());
+    }
     void workspaceIntegration() {
         ScopeDevice device; DsoSettings settings(&device); settings.alwaysSave=false;
         // An old saved layout must not hide the new central workbench or be
@@ -1293,6 +1383,14 @@ private slots:
             }
         }
         QVERIFY2(yellowPixels>100,"The live scope did not render the capture received before GL initialization");
+        for(auto scope:window.findChildren<GlScope*>()) if(scope->isVisible()) {
+            // Tooltips must update from the held result without another FFT or capture.
+            emit scope->cursorMeasurement(QPointF(-1,settings.scope.voltage[0].offset),QPoint(100,100),true);
+            const auto before=QToolTip::text(); QVERIFY(!before.isEmpty());
+            emit scope->cursorMeasurement(QPointF(1,settings.scope.voltage[0].offset),QPoint(100,100),true);
+            QVERIFY(QToolTip::text()!=before);
+            emit scope->cursorMeasurement(QPointF(),QPoint(),false);
+        }
         QVERIFY(window.grab().save(qEnvironmentVariable("OH_GUI_SCREENSHOT")+".scope.png"));
         workspace->setCurrentIndex(0); QTest::qWait(100);
         auto scroll=dock->findChild<QScrollArea*>("labWorkbenchScroll");
@@ -1317,6 +1415,17 @@ private slots:
             QVERIFY(dialog); dialog->button(QMessageBox::Discard)->click();
         });
         window.close();
+        {
+            QWidget holder; holder.setWindowFlag(Qt::X11BypassWindowManagerHint); holder.resize(900,500);
+            auto scope=GlScope::createNormal(&settings.scope,&settings.view,&holder); scope->resize(900,500);
+            auto older=std::make_shared<PPresult>(*frame); std::weak_ptr<PPresult> oldFrame=older;
+            scope->showData(older); older.reset(); QVERIFY(!oldFrame.expired());
+            auto newer=std::make_shared<PPresult>(*frame); std::weak_ptr<PPresult> newFrame=newer;
+            scope->showData(newer); newer.reset(); QVERIFY(oldFrame.expired()); QVERIFY(!newFrame.expired());
+            // Hidden windows retain exactly one frame; its samples can be released after GPU upload.
+            holder.show(); scope->show(); QTRY_VERIFY(scope->isValid());
+            QVERIFY(!scope->grabFramebuffer().isNull()); QTRY_VERIFY(newFrame.expired());
+        }
     }
 };
 QTEST_MAIN(RegressionTests)

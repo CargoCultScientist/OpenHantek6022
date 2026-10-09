@@ -31,6 +31,9 @@ class DsoConfigDialog : public QDialog {
 
     void changePage( QListWidgetItem *current, QListWidgetItem *previous );
 
+  signals:
+    void settingsApplied();
+
   private:
     void createIcons();
 

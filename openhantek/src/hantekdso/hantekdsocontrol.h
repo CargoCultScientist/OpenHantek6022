@@ -206,6 +206,13 @@ class HantekDsoControl : public QObject {
     bool stateMachineRunning = false;
     int acquireInterval = 0;
     int displayInterval = 0;
+    int delayDisplay = 0;
+    bool lastTriggered = false;
+    bool skipEven = true;
+    bool initialCalibrationFrequencyPending = true;
+    bool hasDisplayData = false;
+    bool displayPending = false;
+    bool displayRefreshRequested = false;
     unsigned activeChannels = 2;
     bool refresh = false; // parameter changed -> new raw to result conversion and trigger search needed
     void requestRefresh( bool active = true ) {
@@ -229,8 +236,12 @@ class HantekDsoControl : public QObject {
     } while ( 0 )
 
   public slots:
-    /// \brief If sampling is disabled, no samplesAvailable() signals are send anymore, no samples
-    /// are fetched from the device and no processing takes place.
+    // Reprocess the held samples after a display/analysis change, without
+    // acquiring new data or changing the current SINGLE arm generation.
+    void requestDisplayRefresh() { displayRefreshRequested = true; }
+
+    /// \brief Disabled sampling holds the acquisition. Only the final pending
+    /// frame or an explicit display/export refresh is sent for processing.
     /// \param enabled Enables/Disables sampling
     void enableSamplingUI( bool enabled = true );
 

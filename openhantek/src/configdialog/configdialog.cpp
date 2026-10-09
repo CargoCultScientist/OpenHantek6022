@@ -124,6 +124,7 @@ void DsoConfigDialog::apply() {
     scopePage->saveSettings();
     analysisPage->saveSettings();
     colorsPage->saveSettings();
+    emit settingsApplied();
 }
 
 

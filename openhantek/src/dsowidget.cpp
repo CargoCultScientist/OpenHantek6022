@@ -65,6 +65,8 @@ DsoWidget::DsoWidget( DsoSettingsScope *scope, DsoSettingsView *view, const Dso:
         cursorMeasurementValid = status;
         if ( !status )
             showCursorMessage(); // switch off
+        else
+            updateCursorMessage();
     } );
     connect( zoomScope, &GlScope::cursorMeasurement, this, [ this ]( QPointF mPos, QPoint gPos, bool status ) {
         cursorMeasurementPosition = mPos;
@@ -72,6 +74,8 @@ DsoWidget::DsoWidget( DsoSettingsScope *scope, DsoSettingsView *view, const Dso:
         cursorMeasurementValid = status;
         if ( !status )
             showCursorMessage(); // switch off
+        else
+            updateCursorMessage();
     } );
 
     // The table for the settings at screen top
@@ -379,6 +383,8 @@ void DsoWidget::setColors() {
     updateTriggerSource();
     setPalette( paletteNow );
     setBackgroundRole( QPalette::Window );
+    mainScope->update();
+    zoomScope->update();
 }
 
 
@@ -951,10 +957,22 @@ void DsoWidget::wheelEvent( QWheelEvent *event ) {
 
 /// \brief Prints analyzed data.
 void DsoWidget::showNew( std::shared_ptr< PPresult > analysedData ) {
+    if (!analysedData)
+        return;
     if ( scope->verboseLevel > 4 )
         qDebug() << "    DsoWidget::showNew()" << analysedData->tag;
     mainScope->showData( analysedData );
     zoomScope->showData( analysedData );
+    latestData = std::move(analysedData);
+    if (isVisible())
+        updateMeasurements();
+}
+
+
+void DsoWidget::updateMeasurements() {
+    if (!latestData)
+        return;
+    const auto &analysedData = latestData;
 
     QPalette triggerLabelPalette = palette();
     if ( scope->liveCalibrationActive ) {
@@ -981,39 +999,11 @@ void DsoWidget::showNew( std::shared_ptr< PPresult > analysedData ) {
     voltageUnits[ MATH ] = analysedData.get()->data( MATH )->voltageUnit;
     updateTriggerDetails();
 
-    QString uStr;
-    QString mStr;
-    double uCursor = INT_MIN;
-    double mCursor = INT_MIN;
-    bool uVisible = false;
-    bool mVisible = false;
-
     for ( ChannelID channel = 0; channel < scope->voltage.size(); ++channel ) {
         if ( ( scope->voltage[ channel ].used || scope->spectrum[ channel ].used ) && analysedData.get()->data( channel ) ) {
             const DataChannel *data = analysedData.get()->data( channel );
             voltageUnits[ channel ] = data->voltageUnit; // V² for math multiply functions
             Unit voltageUnit = voltageUnits[ channel ];
-            if ( cursorMeasurementValid ) { // right mouse button pressed, measure at mouse position
-                // qDebug() << "visible" << channel << scope->voltage[ channel ].visible << scope->spectrum[ channel ].visible;
-                // voltage and spec magnitude at cursor position
-                uCursor = ( cursorMeasurementPosition.y() - scope->voltage[ channel ].offset ) * scope->gain( channel );
-                mCursor =
-                    ( cursorMeasurementPosition.y() - scope->spectrum[ channel ].offset ) * scope->spectrum[ channel ].magnitude;
-                // are u and m values inside or near (+- 20% of division) this visible trace?
-                if ( scope->voltage[ channel ].visible ) {
-                    uVisible = true;
-                    if ( uCursor > data->vmin - 0.2 * scope->gain( channel ) &&
-                         uCursor <= data->vmax + 0.2 * scope->gain( channel ) )
-                        uStr += '\t' + scope->voltage[ channel ].name + ": " + valueToString( uCursor, voltageUnit, 3 );
-                }
-                if ( scope->spectrum[ channel ].visible ) {
-                    mVisible = true;
-                    if ( mCursor > data->dBmin - 0.2 * scope->spectrum[ channel ].magnitude &&
-                         mCursor <= data->dBmax + 0.2 * scope->spectrum[ channel ].magnitude )
-                        mStr += '\t' + scope->spectrum[ channel ].name + ": " + valueToString( mCursor, UNIT_DECIBEL, 3 ) +
-                                scope->analysis.dBsuffix();
-                }
-            }
             // Vpp Amplitude string representation (3 significant digits)
             measurementVppLabel[ channel ]->setText( valueToString( data->vmax - data->vmin, voltageUnit, 3 ) + tr( "pp" ) );
             // DC Amplitude string representation (3 significant digits)
@@ -1068,7 +1058,34 @@ void DsoWidget::showNew( std::shared_ptr< PPresult > analysedData ) {
         measurementNameLabel[ channel ]->setPalette( validPalette );
     }
 
-    if ( cursorMeasurementValid ) {
+    updateCursorMessage();
+}
+
+
+void DsoWidget::updateCursorMessage() {
+    if (cursorMeasurementValid && latestData) {
+        QString uStr;
+        QString mStr;
+        bool uVisible = false;
+        bool mVisible = false;
+        for (ChannelID channel = 0; channel < scope->voltage.size(); ++channel) {
+            const auto *data = latestData->data(channel);
+            if (!data || (!scope->voltage[channel].used && !scope->spectrum[channel].used))
+                continue;
+            const double uCursor = (cursorMeasurementPosition.y() - scope->voltage[channel].offset) * scope->gain(channel);
+            const double mCursor = (cursorMeasurementPosition.y() - scope->spectrum[channel].offset) * scope->spectrum[channel].magnitude;
+            if (scope->voltage[channel].visible) {
+                uVisible = true;
+                if (uCursor > data->vmin - 0.2 * scope->gain(channel) && uCursor <= data->vmax + 0.2 * scope->gain(channel))
+                    uStr += '\t' + scope->voltage[channel].name + ": " + valueToString(uCursor, data->voltageUnit, 3);
+            }
+            if (scope->spectrum[channel].visible) {
+                mVisible = true;
+                if (mCursor > data->dBmin - 0.2 * scope->spectrum[channel].magnitude &&
+                    mCursor <= data->dBmax + 0.2 * scope->spectrum[channel].magnitude)
+                    mStr += '\t' + scope->spectrum[channel].name + ": " + valueToString(mCursor, UNIT_DECIBEL, 3) + scope->analysis.dBsuffix();
+            }
+        }
         QString measurement;
         // show time if inside voltage trace or outside of all traces
         if ( uVisible && ( !uStr.isEmpty() || ( uStr.isEmpty() && mStr.isEmpty() ) ) ) {
@@ -1111,6 +1128,18 @@ void DsoWidget::showEvent( QShowEvent *event ) {
 
     updateTriggerSource();
     adaptTriggerPositionSlider();
+    updateMeasurements();
+}
+
+
+void DsoWidget::refreshDisplaySettings() {
+    setColors();
+    updateZoom(view->zoom);
+    updateCursorGrid(view->cursorsVisible);
+    if (isVisible())
+        updateMeasurements();
+    mainScope->update();
+    zoomScope->update();
 }
 
 

@@ -43,5 +43,5 @@ Q_DECLARE_METATYPE( Dso::WindowFunction )
 struct DsoSettingsAnalysis {
     Dso::WindowFunction spectrumWindow = Dso::WindowFunction::HAMMING; ///< Window function for DFT
     double spectrumLimit = -60.0;                                      ///< Minimum magnitude of the spectrum (Avoids peaks)
-    bool reuseFftPlan = false;                                         ///< Optimize FFT plan and reuse it
+    bool reuseFftPlan = true;                                          ///< Reuse exact-length FFT plans unless disabled
 };

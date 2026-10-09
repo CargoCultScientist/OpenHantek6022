@@ -34,6 +34,16 @@ private:
     const DsoSettings *settings;
     CaptureHistory history;
     std::shared_ptr<const Capture> selected, reference;
+    // Weak identities keep UI caches from extending the history's memory budget.
+    std::deque<std::weak_ptr<const Capture>> listedFrames;
+    struct SelectionAnalysis {
+        std::weak_ptr<const Capture> capture, reference;
+        TimeSpan span;
+        bool aligned=false, measured=false, compared=false, hadReference=false;
+        double offset=0;
+        std::array<Measurements,3> values;
+        std::array<Difference,3> differences;
+    } selectedAnalysis;
     QString selectedName, referenceName;
     CaptureStatistics statistics;
     MeasurementLog measurementLog;

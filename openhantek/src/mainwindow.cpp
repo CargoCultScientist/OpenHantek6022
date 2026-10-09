@@ -194,6 +194,9 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
             exporterRegistry->setExporterEnabled( exporter,
                                                   exporter->type() == ExporterInterface::Type::ContinuousExport ? checked : true );
         } );
+        // A stopped scope no longer continuously republishes identical samples.
+        // Request exactly one held frame after enabling this export.
+        connect(action, &QAction::triggered, dsoControl, &HantekDsoControl::requestDisplayRefresh);
         ui->menuExport->addAction( action );
     }
 
@@ -397,6 +400,33 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     connect( spectrumDock, &SpectrumDock::usedChannelChanged, dsoWidget, &DsoWidget::updateSpectrumUsed );
     connect( spectrumDock, &SpectrumDock::magnitudeChanged, dsoWidget, &DsoWidget::updateSpectrumMagnitude );
 
+    // Analysis and graph geometry depend on these settings even while held.
+    // Refresh the existing result only; this slot never changes acquisition or
+    // the generation used to reject stale SINGLE captures.
+    const auto refreshDisplay = &HantekDsoControl::requestDisplayRefresh;
+    connect(horizontalDock, &HorizontalDock::samplerateChanged, dsoControl, refreshDisplay);
+    connect(horizontalDock, &HorizontalDock::timebaseChanged, dsoControl, refreshDisplay);
+    connect(horizontalDock, &HorizontalDock::recordLengthChanged, dsoControl, refreshDisplay);
+    connect(horizontalDock, &HorizontalDock::formatChanged, dsoControl, refreshDisplay);
+    connect(spectrumDock, &SpectrumDock::frequencybaseChanged, dsoControl, refreshDisplay);
+    connect(spectrumDock, &SpectrumDock::magnitudeChanged, dsoControl, refreshDisplay);
+    connect(spectrumDock, &SpectrumDock::usedChannelChanged, dsoControl, refreshDisplay);
+    connect(voltageDock, &VoltageDock::gainChanged, dsoControl, refreshDisplay);
+    connect(voltageDock, &VoltageDock::usedChannelChanged, dsoControl, refreshDisplay);
+    connect(voltageDock, &VoltageDock::modeChanged, dsoControl, refreshDisplay);
+    connect(voltageDock, &VoltageDock::probeAttnChanged, dsoControl, refreshDisplay);
+    connect(voltageDock, &VoltageDock::invertedChanged, dsoControl, refreshDisplay);
+    connect(voltageDock, &VoltageDock::couplingChanged, dsoControl, refreshDisplay);
+    connect(triggerDock, &TriggerDock::modeChanged, dsoControl, refreshDisplay);
+    connect(triggerDock, &TriggerDock::sourceChanged, dsoControl, refreshDisplay);
+    connect(triggerDock, &TriggerDock::smoothChanged, dsoControl, refreshDisplay);
+    connect(triggerDock, &TriggerDock::slopeChanged, dsoControl, refreshDisplay);
+    connect(dsoWidget, &DsoWidget::voltageOffsetChanged, dsoControl, refreshDisplay);
+    connect(dsoWidget, &DsoWidget::triggerPositionChanged, dsoControl, refreshDisplay);
+    connect(dsoWidget, &DsoWidget::triggerLevelChanged, dsoControl, refreshDisplay);
+    connect(this, &MainWindow::settingsLoaded, dsoControl, refreshDisplay);
+    connect(ui->actionCalibrateOffset, &QAction::toggled, dsoControl, refreshDisplay);
+
     // Started/stopped signals from oscilloscope
     connect( dsoControl, &HantekDsoControl::showSamplingStatus, this, [ this ]( bool enabled ) {
         samplingActive = enabled;
@@ -462,11 +492,13 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
 
     connect( ui->actionExit, &QAction::triggered, this, &QWidget::close );
 
-    connect( ui->actionSettings, &QAction::triggered, this, [ this ]() {
+    connect( ui->actionSettings, &QAction::triggered, this, [ this, dsoControl ]() {
         dsoSettings->mainWindowGeometry = saveGeometry();
         dsoSettings->mainWindowState = saveState(workspaceLayoutVersion);
 
         DsoConfigDialog *configDialog = new DsoConfigDialog( dsoSettings, this );
+        connect(configDialog, &DsoConfigDialog::settingsApplied, dsoWidget, &DsoWidget::refreshDisplaySettings);
+        connect(configDialog, &DsoConfigDialog::settingsApplied, dsoControl, &HantekDsoControl::requestDisplayRefresh);
         configDialog->setModal( true );
         configDialog->show();
     } );
@@ -480,6 +512,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
             ui->actionPhosphor->setStatusTip( tr( "Enable fading of previous graphs" ) );
     } );
     ui->actionPhosphor->setChecked( dsoSettings->view.digitalPhosphor );
+    connect(ui->actionPhosphor, &QAction::toggled, dsoControl, refreshDisplay);
 
     connect( ui->actionHistogram, &QAction::toggled, this, [ this ]( bool enabled ) {
         dsoSettings->scope.histogram = enabled;
@@ -490,6 +523,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
             ui->actionHistogram->setStatusTip( tr( "Show histogram" ) );
     } );
     ui->actionHistogram->setChecked( dsoSettings->scope.histogram );
+    connect(ui->actionHistogram, &QAction::toggled, dsoControl, refreshDisplay);
     ui->actionHistogram->setEnabled( scope->horizontal.format == Dso::GraphFormat::TY );
 
     connect( ui->actionZoom, &QAction::toggled, this, [ this ]( bool enabled ) {

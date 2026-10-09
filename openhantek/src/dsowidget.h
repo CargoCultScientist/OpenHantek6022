@@ -123,9 +123,13 @@ class DsoWidget : public QWidget {
     ChannelID selectedCursor = 0;
     void switchToMarker();
     void showCursorMessage( QPoint globalPos = QPoint(), const QString &message = QString() );
+    void updateCursorMessage();
+    void updateMeasurements();
+    std::shared_ptr<PPresult> latestData;
     void updateItem( ChannelID index, bool switchOn = false );
 
   public slots:
+    void refreshDisplaySettings();
     // Horizontal axis
     // void horizontalFormatChanged(HorizontalFormat format);
     void updateFrequencybase( double frequencybase );

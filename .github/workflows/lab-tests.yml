@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        configuration: [debug, sanitizers]
+        configuration: [debug, release, sanitizers]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,6 +31,9 @@ jobs:
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g1"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+      - name: Configure optimized build
+        if: matrix.configuration == 'release'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
       - name: Build
         run: cmake --build build -j2
       - name: Test
@@ -39,24 +42,24 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: ctest --test-dir build --output-on-failure
       - name: Verify integrated workspace with software OpenGL
-        if: matrix.configuration == 'debug'
+        if: matrix.configuration != 'sanitizers'
         env:
           QT_QPA_PLATFORM: xcb
           LIBGL_ALWAYS_SOFTWARE: '1'
           OH_GUI_SCREENSHOT: ${{ runner.temp }}/workspace.png
         run: xvfb-run -a -s '-screen 0 1920x1080x24' build/openhantek/oh_regression integratedGuiSmoke
       - name: Upload workspace previews
-        if: always() && matrix.configuration == 'debug'
+        if: always() && matrix.configuration != 'sanitizers'
         uses: actions/upload-artifact@v4
         with:
-          name: workspace-previews
+          name: workspace-previews-${{ matrix.configuration }}
           path: ${{ runner.temp }}/workspace.png*
           if-no-files-found: ignore
           retention-days: 14
       - name: Upload verified Linux development binary
-        if: success() && matrix.configuration == 'debug'
+        if: success() && matrix.configuration != 'sanitizers'
         uses: actions/upload-artifact@v4
         with:
-          name: OpenHantekLab-linux-debug
+          name: OpenHantekLab-linux-${{ matrix.configuration }}
           path: build/openhantek/OpenHantekLab
           retention-days: 14

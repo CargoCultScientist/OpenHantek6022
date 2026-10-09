@@ -921,6 +921,8 @@ void HantekDsoControl::updateInterval() {
     displayInterval = 100; // update display at least every 100 ms
 #endif
     acquireInterval = qMin( qMax( sampleInterval, acquireInterval ), 100 ); // at least every 100 ms
+    if (!samplingUI)
+        acquireInterval = 100; // Stopped controls remain responsive without busy polling.
 }
 
 
@@ -937,7 +939,7 @@ void HantekDsoControl::stateMachine() {
     bool available;
     {
         QReadLocker locker(&raw.lock);
-        available = raw.valid && (raw.tag != lastTag || raw.freeRun || refreshNeeded());
+        available = raw.valid && (raw.tag != lastTag || (samplingUI && raw.freeRun) || refreshNeeded());
     }
     if ( samplingStarted && available ) {
         convertRawDataToSamples(); // process samples, apply gain settings etc.
@@ -955,27 +957,28 @@ void HantekDsoControl::stateMachine() {
             triggered = false;
             result.triggeredPosition = 0;
         }
+        hasDisplayData = true;
+        displayPending = true;
     } else { // TODO: check if this is needed anymore: start with correct calibration frequency
-        static bool firstFreq = true;
-        if ( firstFreq && scope ) {
+        if ( initialCalibrationFrequencyPending && scope ) {
             setCalFreq( scope->horizontal.calfreq );
-            firstFreq = false;
+            initialCalibrationFrequencyPending = false;
         }
     }
-    static int delayDisplay = 0;                // timer for display
-    static bool lastTriggered = false;          // state of last frame
-    static bool skipEven = true;                // even or odd frames were skipped
-    delayDisplay += qMax( acquireInterval, 1 ); // count up with every state machine loop
-    // always run the display (slowly at t=displayInterval) to allow user interaction
-    // ... but update immediately if new triggered data is available after untriggered
+    delayDisplay = qMin(displayInterval, delayDisplay + qMax(acquireInterval, 1));
+    // Only new data or an explicit settings/export request needs analysis.
+    // Retain a pending frame across Stop until its display deadline arrives.
+    // Update immediately if new triggered data is available after untriggered.
     // skip an even number of frames when slope == Dso::Slope::Both
-    if ( freshSingleTrigger || ( triggered && !lastTriggered )            // never lose the last SINGLE frame
-         || ( ( delayDisplay >= displayInterval )                        // or wait some time ...
-              && ( ( controlsettings.trigger.slope != Dso::Slope::Both ) // ... for ↗ or ↘ slope
-                   || skipEven ) ) ) {                                   // and drop even no. of frames
+    const bool displayDue = delayDisplay >= displayInterval &&
+        (controlsettings.trigger.slope != Dso::Slope::Both || skipEven || displayRefreshRequested || !samplingUI);
+    if (hasDisplayData && (displayPending || displayRefreshRequested) &&
+        (freshSingleTrigger || (triggered && !lastTriggered) || displayDue)) {
         skipEven = true;                                                 // zero frames -> even
         delayDisplay = 0;
         timestampDebug( QString( "samplesAvailable %1" ).arg( result.tag ) );
+        displayPending = false;
+        displayRefreshRequested = false;
         emit samplesAvailable( result.snapshot() );
     } else {
         skipEven = !skipEven;

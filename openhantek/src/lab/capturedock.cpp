@@ -36,6 +36,9 @@ namespace Lab {
 static QString number(double value, Unit unit=UNIT_NONE) {
     return std::isfinite(value) ? valueToString(value,unit,5) : QString::fromUtf8("—");
 }
+static void setStyleIfChanged(QWidget *widget,const QString &style) {
+    if(widget->styleSheet()!=style) widget->setStyleSheet(style);
+}
 static QColor channelColor(size_t channel) {
     static const std::array<QColor,3> colors={QColor("#fbd46a"),QColor("#68c8ee"),QColor("#d6a0ed")};
     return colors.at(channel);
@@ -303,6 +306,7 @@ CaptureDock::CaptureDock(const DsoSettings *settings, QWidget *parent)
     offset=new QDoubleSpinBox(body); offset->setDecimals(9); offset->setRange(-1e3,1e3); offset->setSingleStep(.000001);
     comparison->addWidget(offset);
     clearReferenceButton=new QPushButton(tr("Clear reference"),body); comparison->addWidget(clearReferenceButton);
+    clearReferenceButton->setObjectName("labClearReference");
     connect(clearReferenceButton,&QPushButton::clicked,this,[this]{reference.reset(); referenceName.clear(); resetMask();});
     comparison->addStretch(); referencePage->addLayout(comparison);
     referencePage->addWidget(new QLabel(tr("Solid trace: selected capture   /   Dashed trace: pinned reference   /   Differences use interpolation, never extrapolation."),body));
@@ -400,6 +404,9 @@ CaptureDock::CaptureDock(const DsoSettings *settings, QWidget *parent)
     }
     layout->addLayout(meterRow);
     measurements=new QTableWidget(views); views->addTab(measurements,tr("Measurements"));
+    connect(views,&QTabWidget::currentChanged,this,[this,views]{
+        if(views->currentWidget()==measurements) measurements->resizeRowsToContents();
+    });
     measurements->setObjectName("labMeasurements"); measurements->setColumnCount(22);
     measurements->setHorizontalHeaderLabels({tr("Channel / span"),tr("Vpp"),tr("Mean"),tr("RMS"),tr("Frequency"),tr("Duty +"),
         tr("Width +"),tr("Rise 10–90"),tr("Fall 90–10"),tr("Δ RMS"),tr("Δ max"),tr("Status"),tr("Live Vpp statistics"),
@@ -499,24 +506,42 @@ MaskSpec CaptureDock::maskSpec() const {
 MaskResult CaptureDock::maskResult(const Capture &capture) const {return testMask(capture,reference.get(),maskSpec(),align->isChecked(),offset->value());}
 void CaptureDock::resetMask() {maskPassed=maskFailed=maskUntestable=0; maskResults.clear(); refreshList(); refresh();}
 void CaptureDock::refreshList() {
-    QSignalBlocker blocker(list); list->clear();
+    QSignalBlocker blocker(list);
+    const auto &frames=history.frames();
+    // History only appends at the back and evicts at the front. Preserve the
+    // existing rows instead of rebuilding up to 128 widgets on every capture.
+    while(!listedFrames.empty() && (frames.empty() || listedFrames.front().lock()!=frames.front())) {
+        delete list->takeItem(0); listedFrames.pop_front();
+    }
+    for(size_t i=listedFrames.size();i<frames.size();++i) {
+        const auto &frame=frames[i];
+        auto item=new QListWidgetItem(list);
+        item->setData(Qt::UserRole,QString("#%1  ·  %2").arg(frame->tag)
+            .arg(QDateTime::fromMSecsSinceEpoch(frame->capturedAtMs).toString("HH:mm:ss.zzz")));
+        listedFrames.push_back(frame);
+    }
     std::map<std::shared_ptr<const Capture>,MaskResult> retained;
-    int index=0;
-    for(const auto &frame:history.frames()) {
-        auto item=new QListWidgetItem(QString("#%1  ·  %2").arg(frame->tag).arg(QDateTime::fromMSecsSinceEpoch(frame->capturedAtMs).toString("HH:mm:ss.zzz")),list);
+    int index=0, selectedRow=-1;
+    for(const auto &frame:frames) {
+        auto item=list->item(index);
+        const auto title=item->data(Qt::UserRole).toString();
         if(maskEnabled->isChecked()) {
             const auto found=maskResults.find(frame);
             const auto result=found==maskResults.end()?maskResult(*frame):found->second;
             retained.emplace(frame,result);
-            item->setText(item->text()+"\n"+maskStateName(result.state));
+            item->setText(title+"\n"+maskStateName(result.state));
             item->setToolTip(result.reason.isEmpty()?tr("%1 / %2 samples outside tolerance").arg(result.outside).arg(result.tested):result.reason);
             item->setForeground(result.state==MaskState::Fail?QColor("#ff9d9d"):result.state==MaskState::Pass?QColor("#99e9c2"):QColor("#c5cedb"));
             const int filter=historyFilter->currentIndex();
             item->setHidden((filter==1 && result.state!=MaskState::Fail)||(filter==2 && result.state!=MaskState::Pass)||(filter==3 && result.state!=MaskState::Untestable));
-        } else item->setHidden(historyFilter->currentIndex()!=0);
-        if(frame==selected) list->setCurrentRow(index);
+        } else {
+            item->setText(title); item->setToolTip({}); item->setForeground(QBrush());
+            item->setHidden(historyFilter->currentIndex()!=0);
+        }
+        if(frame==selected) selectedRow=index;
         ++index;
     }
+    list->setCurrentRow(selectedRow);
     maskResults=std::move(retained); // Evicted captures must not remain retained by the result cache.
     if(live->isChecked()) list->scrollToBottom();
 }
@@ -536,13 +561,13 @@ void CaptureDock::refresh() {
     if(selected && maskEnabled->isChecked()) selectionBadge->setText(selectionBadge->text()+"  ·  "+maskStateName(mask.state));
     if(list->currentItem() && list->currentItem()->isHidden()) selectionBadge->setText(selectionBadge->text()+tr("  ·  outside filter"));
     const QString badgeColor=maskEnabled->isChecked()?(mask.state==MaskState::Fail?"#ffb0b0":mask.state==MaskState::Pass?"#a5efd0":"#ecd09d"):"#bcf0e5";
-    selectionBadge->setStyleSheet(QString("background: #243d50; color: %1; border-radius: 5px; padding: 5px 10px;").arg(badgeColor));
+    setStyleIfChanged(selectionBadge,QString("background: #243d50; color: %1; border-radius: 5px; padding: 5px 10px;").arg(badgeColor));
     saveButton->setEnabled(bool(selected)); referenceButton->setEnabled(bool(selected)); clearReferenceButton->setEnabled(bool(reference));
     const bool unsaved=logRevision!=exportedLogRevision;
     logBadge->setText(tr("Log: %1 · %2 in RAM%3")
         .arg(collectLog->isChecked()?tr("collecting"):tr("paused")).arg(measurementLog.entries().size())
         .arg(unsaved?tr(" · unexported"):QString()));
-    logBadge->setStyleSheet(QString("color: %1;").arg(unsaved?"#ecd09d":"#a6b9cf"));
+    setStyleIfChanged(logBadge,QString("color: %1;").arg(unsaved?"#ecd09d":"#a6b9cf"));
     logBadge->setToolTip(tr("Session-log collection is independent of history and Follow latest. RAM readings are lost on a crash; export CSV to keep them."));
     Unit maskUnit=UNIT_NONE;
     if(reference && maskSpec().channel<reference->channels.size()) maskUnit=reference->channels[maskSpec().channel].unit;
@@ -556,13 +581,27 @@ void CaptureDock::refresh() {
     trend->update();
     measurements->horizontalHeaderItem(12)->setText(tr("Live %1 statistics").arg(statisticMetric->currentText()));
     measurements->setRowCount(selected?int(selected->channels.size()):0);
-    for(auto meter:quickMetrics) meter->hide();
+    for(size_t c=0;c<quickMetrics.size();++c)
+        quickMetrics[c]->setVisible(selected && c<selected->channels.size() && !selected->channels[c].signal.samples.empty());
+    if(selectedAnalysis.capture.lock()!=selected || selectedAnalysis.span.start!=span.start ||
+       selectedAnalysis.span.end!=span.end || selectedAnalysis.aligned!=align->isChecked()) {
+        selectedAnalysis.capture=selected; selectedAnalysis.span=span; selectedAnalysis.aligned=align->isChecked();
+        selectedAnalysis.measured=selectedAnalysis.compared=false;
+    }
+    if(selectedAnalysis.hadReference!=bool(reference) || selectedAnalysis.reference.lock()!=reference ||
+       selectedAnalysis.offset!=offset->value()) {
+        selectedAnalysis.hadReference=bool(reference); selectedAnalysis.reference=reference;
+        selectedAnalysis.offset=offset->value(); selectedAnalysis.compared=false;
+    }
     if(selected) for(size_t c=0;c<selected->channels.size();++c) {
         const auto &ch=selected->channels[c];
         const double origin=timeOrigin(*selected,ch,align->isChecked());
         const auto range=sampleRange(ch.signal.samples.size(),ch.signal.interval,origin,span);
-        const auto m=measure(ch.signal.samples,ch.signal.interval,ch.valid,range);
-        const auto difference=reference?compare(*selected,*reference,c,align->isChecked(),offset->value(),span):Difference{};
+        if(!selectedAnalysis.measured) selectedAnalysis.values[c]=measure(ch.signal.samples,ch.signal.interval,ch.valid,range);
+        if(!selectedAnalysis.compared) selectedAnalysis.differences[c]=reference?
+            compare(*selected,*reference,c,align->isChecked(),offset->value(),span):Difference{};
+        const auto &m=selectedAnalysis.values[c];
+        const auto &difference=selectedAnalysis.differences[c];
         QString state;
         if(!m.count) state=tr("No finite samples in span");
         else if(m.clipped) state=tr("CLIPPED: timing unavailable");
@@ -574,9 +613,9 @@ void CaptureDock::refresh() {
             auto meter=quickMetrics[c]; meter->name->setText(ch.name); meter->name->setToolTip(ch.name);
             meter->values[0]->setText(number(m.vpp,ch.unit)); meter->values[1]->setText(number(m.frequency,UNIT_HERTZ));
             meter->values[2]->setText(number(m.rms,ch.unit)); meter->state->setText(state);
-            meter->state->setStyleSheet(QString("color: %1; font-size: 11px;")
+            setStyleIfChanged(meter->state,QString("color: %1; font-size: 11px;")
                 .arg(!m.count || m.clipped || m.undersampled || m.irregular?"#ffc184":"#a6b9cf"));
-            meter->span->setText(tr("%1 · %2 samples").arg(spanMode->currentText()).arg(m.count)); meter->show();
+            meter->span->setText(tr("%1 · %2 samples").arg(spanMode->currentText()).arg(m.count));
         }
         if(reference && !difference.error.isEmpty()) state+=" · "+difference.error;
         const auto &channelStats=statistics.channels[c];
@@ -596,7 +635,11 @@ void CaptureDock::refresh() {
             number(difference.count?difference.rms:unavailable,ch.unit),number(difference.count?difference.maximum:unavailable,ch.unit),state,statisticsText,
             number(m.minimum,ch.unit),number(m.maximum,ch.unit),number(m.acRms,ch.unit),number(m.period,UNIT_SECONDS),
             percent(m.negativeDuty),number(m.negativeWidth,UNIT_SECONDS),number(m.cycleMean,ch.unit),number(m.cycleRms,ch.unit),number(m.crestFactor)};
-        for(int col=0;col<cells.size();++col) measurements->setItem(int(c),col,new QTableWidgetItem(cells[col]));
+        for(int col=0;col<cells.size();++col) {
+            auto item=measurements->item(int(c),col);
+            if(item) item->setText(cells[col]);
+            else measurements->setItem(int(c),col,new QTableWidgetItem(cells[col]));
+        }
         measurements->item(int(c),0)->setForeground(channelColor(c));
         const QString cycles=tr("%1 complete cycles over %2 inside the measurement span. Mean/RMS integrate linearly interpolated samples.")
             .arg(m.cycles).arg(number(m.cycleSpan,UNIT_SECONDS));
@@ -604,7 +647,8 @@ void CaptureDock::refresh() {
         const QString overlap=tr("%1 selected samples with reference overlap inside the measurement span.").arg(difference.count);
         measurements->item(int(c),9)->setToolTip(overlap); measurements->item(int(c),10)->setToolTip(overlap);
     }
-    measurements->resizeRowsToContents();
+    selectedAnalysis.measured=selectedAnalysis.compared=bool(selected);
+    if(measurements->isVisible()) measurements->resizeRowsToContents();
     status->setText(tr("%1 / 128 displayed acquisitions · %2 MiB / 64 MiB · %3 skipped acquisition tags · NOT gapless. "
                        "Measurements: %4; shaded span, sample centres inside its boundaries. Δ: reference overlap within this span. "
                        "Live statistics: newly recorded, unclipped acquisitions only; browsing does not add values.")

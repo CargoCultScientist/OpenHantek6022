@@ -102,7 +102,8 @@ void GraphGenerator::generateGraphsTYvoltage( PPresult *result ) {
 
         // Set size directly to avoid reallocations (n+1 dots to display n lines)
         graphVoltage.reserve( ++dotsOnScreen * ( interpolationStep ? 2 : 1 ) ); // two dots per "Step"
-        graphHistogram.reserve( int( 2 * ( binsPerDiv * DIVS_VOLTAGE ) ) );
+        if (scope->histogram)
+            graphHistogram.reserve( int( 2 * ( binsPerDiv * DIVS_VOLTAGE ) ) );
 
         const double gain = scope->gain( channel );
         const double offset = scope->voltage[ channel ].offset;
@@ -201,10 +202,8 @@ void GraphGenerator::generateGraphsTYspectrum( PPresult *result ) {
         }
         // Check if the sample count has changed
         size_t sampleCount = sampleValues.samples.size();
-        size_t neededSize = sampleCount * 2;
-
         // Set size directly to avoid reallocations
-        graphSpectrum.reserve( neededSize );
+        graphSpectrum.reserve( sampleCount );
 
         // What's the horizontal distance between sampling points?
         double horizontalFactor = sampleValues.interval / scope->horizontal.frequencybase;
@@ -255,7 +254,7 @@ void GraphGenerator::generateGraphsXY( PPresult *result ) {
         // Check if the sample count has changed
         const size_t sampleCount = std::min( xSamples.samples.size(), ySamples.samples.size() );
         ChannelGraph &graphXY = result->vaChannelVoltage[ yChannel ]; // color of y channel
-        graphXY.reserve( sampleCount * 2 );
+        graphXY.reserve( sampleCount );
 
         // Fill vector array
         std::vector< double >::const_iterator xIterator = xSamples.samples.begin();

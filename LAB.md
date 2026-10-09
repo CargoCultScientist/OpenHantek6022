@@ -387,10 +387,50 @@ capture reaches the actual OpenGL plot, and checks a 1280×800 default workspace
 It also opens the live-scope hardcopy action from Capture Lab and checks that the
 saved image contains waveform pixels, not just a frame or grid.
 
-The `Lab regression tests` GitHub workflow builds this branch in debug and
-address/undefined-behaviour sanitizer configurations, with leak detection enabled.
-The debug job runs the integrated GUI test under software OpenGL and uploads
-workspace previews and a Linux development binary. These remote checks avoid
+The `Lab regression tests` GitHub workflow builds this branch in debug, optimized
+Release and address/undefined-behaviour sanitizer configurations, with leak detection
+enabled. The debug and Release jobs run the integrated GUI test under software
+OpenGL and upload workspace previews and Linux development binaries. These remote checks avoid
 local compilation on the thermally unstable development machine. Downloaded
 development binaries are not installers; use only artifacts for the intended
 commit after reviewing all its checks.
+
+### Lower-resource operation (2026-10-09)
+
+This pass reduces redundant analysis, allocation and redraw work without reducing
+capture length, measurement precision or history limits:
+
+- Stopped acquisition no longer sends the same frame through analysis on every
+  display timer tick. A pending final frame is still delivered, and explicit
+  display/settings changes and legacy exports request one refresh. These requests
+  coalesce and do not rearm SINGLE. Cursor tooltips use the held result directly.
+  Continuous exporters now follow new acquisitions and explicit refreshes, rather
+  than receiving timer-generated duplicates while stopped.
+- Hidden OpenGL views defer uploads and keep only the newest pending frame. On
+  reveal they draw that frame, including a held SINGLE capture. Phosphor history
+  represents frames actually painted, not intermediate arrivals that were hidden
+  or coalesced before painting. Hidden scope measurement labels update on reveal.
+- FFT processing retains one aligned scratch-buffer pair across channels and
+  frames, growing only when the actual record requires it. Completed spectra keep
+  only their non-mirrored bins; XY/spectrum vertices are not reserved at twice the
+  output length, and disabled histograms allocate no vertex capacity.
+- New configurations default to reusing FFT plans. An explicitly saved disabled
+  preference is preserved; existing configuration files are not rewritten.
+- The capture browser updates appended/evicted rows instead of rebuilding the
+  list. Measurement cells are reused, and selected-capture results are cached
+  until their capture, gate, alignment or reference inputs change. Cache keys use
+  weak references so they do not keep evicted waveform buffers alive.
+
+Resource regressions check unchanged stopped ticks versus explicit refreshes,
+pending-frame delivery, held-control refreshes, list/cell reuse and cache
+invalidation after reference eviction. Separate FFT tests compare persistent and
+fresh generators across changing lengths, windows and plan-reuse settings, while
+graph tests check output coordinates and retained capacity. The integrated GUI
+test checks held cursor tooltips and latest-only hidden-view ownership.
+
+Use the `OpenHantekLab-linux-release` artifact for normal evaluation after all
+checks pass; the debug artifact is intended for diagnosis. No percentage CPU/RAM
+savings or minimum hardware specification is claimed without a controlled
+benchmark. These changes do not establish the cause of the machine's previous
+crashes or correct a hardware cooling problem. USB/device validation remains a
+separate bench check; local builds and stress tests are deliberately avoided.

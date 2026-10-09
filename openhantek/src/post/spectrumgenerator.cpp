@@ -67,6 +67,24 @@ SpectrumGenerator::~SpectrumGenerator() {
 }
 
 
+bool SpectrumGenerator::ensureFftBuffers(size_t sampleCount) {
+    if (sampleCount <= fftBufferSize)
+        return true;
+
+    // FFTW's alignment is part of the plan contract. Keep one reusable pair for
+    // both transforms and all channels; never grow it to the device's maximum
+    // record length when this acquisition needs fewer samples.
+    FftBuffer input(fftw_alloc_real(sampleCount), &fftw_free);
+    FftBuffer output(fftw_alloc_real(sampleCount), &fftw_free);
+    if (!input || !output)
+        return false;
+    fftInput = std::move(input);
+    fftOutput = std::move(output);
+    fftBufferSize = sampleCount;
+    return true;
+}
+
+
 // besseli0() and Kaiser calculation from "SigPack - the C++ signal processing library"
 // http://sigpack.sourceforge.net/window_8h_source.html
 static double besseli0( double x ) {
@@ -85,14 +103,6 @@ void SpectrumGenerator::process( PPresult *result ) {
 
     if ( scope->verboseLevel > 4 )
         qDebug() << "    SpectrumGenerator::process()" << result->tag;
-
-    // we use correctly aligned input and output data structures for fft
-    // we use "fftw_alloc_real()" and "fftw_free()" to handle these arrays dynamically
-    // these pointers are used during "process()"
-    double *fftWindowedValues = nullptr;
-    double *fftHcSpectrum = nullptr;
-    double *fftPowerSpectrum = nullptr;
-    double *fftAutoCorrelation = nullptr;
 
     for ( ChannelID channel = 0; channel < result->channelCount(); ++channel ) {
         DataChannel *const channelData = result->modifiableData( channel );
@@ -227,10 +237,10 @@ void SpectrumGenerator::process( PPresult *result ) {
                 w *= windowScale;
         }
 
-        // Allocate the sample buffer (16byte aligned)
-        fftWindowedValues = fftw_alloc_real( size_t( qMax( SAMPLESIZE, sampleCount ) ) );
-        if ( nullptr == fftWindowedValues )
+        if (!ensureFftBuffers(size_t(sampleCount)))
             break;
+        double *const fftWindowedValues = fftInput.get();
+        double *const fftHcSpectrum = fftOutput.get();
 
         // Set sampling interval
         channelData->spectrum.interval = 1.0 / channelData->voltage.interval / double( sampleCount );
@@ -238,8 +248,9 @@ void SpectrumGenerator::process( PPresult *result ) {
         // Number of real/complex samples
         int dftLength = sampleCount / 2;
 
-        // Reallocate memory for samples if the sample count has changed
-        channelData->spectrum.samples.resize( size_t( sampleCount ) );
+        // Only the non-mirrored bins are retained. Allocating a full record here
+        // would keep twice the necessary capacity in every completed frame.
+        channelData->spectrum.samples.resize( size_t( dftLength + 1 ) );
 
         // calculate the peak-to-peak value of the displayed part of trace
         double min = INT_MAX;
@@ -292,9 +303,6 @@ void SpectrumGenerator::process( PPresult *result ) {
 
         // Do discrete real to half-complex transformation
         // Record length should be multiple of 2, 3, 5: done, is 10000 = 2^a * 5^b
-        fftHcSpectrum = fftw_alloc_real( size_t( std::max( SAMPLESIZE, sampleCount ) ) );
-        if ( nullptr == fftHcSpectrum ) // error
-            break;
         {
             std::lock_guard<std::mutex> guard(fftPlannerMutex);
             if (fftPlan_R2HC && (forwardPlanSize != sampleCount || !analysis->reuseFftPlan)) {
@@ -323,8 +331,7 @@ void SpectrumGenerator::process( PPresult *result ) {
         // because hc2r iDFT destroys spectrum input
         const double halfLength = sampleCount / 2.0;
         const double norm = 1.0 / halfLength / halfLength;
-        fftPowerSpectrum = fftWindowedValues; // "rename" the fftw array, will be reused as input for the iDFT
-        fftWindowedValues = nullptr;          // invalidate the old pointer
+        double *const fftPowerSpectrum = fftWindowedValues; // reuse the forward input for the iDFT
 
         int position;
         // correct the (half-)complex values in hcSpectrum
@@ -346,17 +353,12 @@ void SpectrumGenerator::process( PPresult *result ) {
         *spectrumIterator = *fwd * *fwd + (sampleCount % 2 ? *rev * *rev : 0.0);
         *powerIterator++ = *spectrumIterator++ * norm;
 
-        // skip mirrored 2nd half (-1) of result spectrum
-        channelData->spectrum.samples.resize( size_t( dftLength + 1 ) );
-
         // Complex values, all zero for autocorrelation
         for ( ++position; position < sampleCount; ++position ) {
             *powerIterator++ = 0;
         }
 
-        // reuse the array, but "rename" it
-        fftAutoCorrelation = fftHcSpectrum;
-        fftHcSpectrum = nullptr;
+        double *const fftAutoCorrelation = fftHcSpectrum; // reuse the forward output
 
         // Do half-complex to real inverse transformation -> autocorrelation
         {
@@ -372,9 +374,8 @@ void SpectrumGenerator::process( PPresult *result ) {
         }
         if (!fftPlan_HC2R) break;
         fftw_execute_r2r(fftPlan_HC2R, fftPowerSpectrum, fftAutoCorrelation);
-        // content was destroyed during iFFT, free the memory
-        fftw_free( fftPowerSpectrum );
-        fftPowerSpectrum = nullptr;
+        // The inverse transform may destroy its input. The next channel/frame
+        // overwrites every used element before executing the forward transform.
 
         // Get the frequency from the correlation results
         int peakCorrPos = 0;
@@ -395,9 +396,6 @@ void SpectrumGenerator::process( PPresult *result ) {
                 // printf( "min %d: %g\n", position, minCorr );
             }
         }
-        fftw_free( fftAutoCorrelation );
-        fftAutoCorrelation = nullptr;
-
         // Finally calculate the real spectrum (it's also used for frequency calculation)
         // Convert values into dB (Relative to the reference level 0 dBV = 1V eff)
         double offset = -scope->analysis.spectrumReference - 20 * log10( halfLength );
@@ -463,11 +461,6 @@ void SpectrumGenerator::process( PPresult *result ) {
                 channelData->thd = harmonicDistortion(linearPower, peakBin, width);
         }
     }
-    // free the memory used for fft unless already done ("fftw_free( nullptr )" is a no-op)
-    fftw_free( fftWindowedValues );
-    fftw_free( fftHcSpectrum );
-    fftw_free( fftPowerSpectrum );
-    fftw_free( fftAutoCorrelation );
 }
 
 

@@ -122,9 +122,9 @@ class GlScope : public QOpenGLWidget {
 
     // Graphs
     std::list< Graph > m_GraphHistory;
-    // The live tab may not have an OpenGL context yet when acquisition starts.
-    // Retain only the newest frame until it is first shown (also covers SINGLE).
-    std::shared_ptr<PPresult> pendingInitialFrame;
+    // Upload only when Qt paints this view. Hidden tabs/zoom keep one newest
+    // frame, including a stopped SINGLE capture, without touching the GPU.
+    std::shared_ptr<PPresult> pendingFrame;
     unsigned currentGraphInHistory = 0;
 
     // OpenGL shader, matrix, var-locations

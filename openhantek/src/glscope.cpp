@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <cmath>
+#include <algorithm>
 
 #include <QColor>
 #include <QCoreApplication>
@@ -481,33 +482,11 @@ void GlScope::initializeGL() {
     generateGrid(); // initialize the grid draw structures
 
     shaderCompileSuccess = true;
-    if (pendingInitialFrame)
-        showData(std::move(pendingInitialFrame));
 }
 
 
 void GlScope::showData( std::shared_ptr< PPresult > newData ) {
-    if ( !shaderCompileSuccess ) {
-        pendingInitialFrame = std::move(newData);
-        return;
-    }
-    makeCurrent();
-    // Remove too much entries
-    while ( view->digitalPhosphorDraws() < m_GraphHistory.size() )
-        m_GraphHistory.pop_back();
-
-    // Add if missing
-    if ( view->digitalPhosphorDraws() > m_GraphHistory.size() ) {
-        m_GraphHistory.resize( m_GraphHistory.size() + 1 );
-    }
-
-    // Move last item to front
-    m_GraphHistory.splice( m_GraphHistory.begin(), m_GraphHistory, std::prev( m_GraphHistory.end() ) );
-
-    // Add new entry
-    m_GraphHistory.front().writeData( newData.get(), m_program.get(), vertexLocation );
-    // doneCurrent();
-
+    pendingFrame = std::move(newData);
     update();
 }
 
@@ -563,15 +542,31 @@ void GlScope::updateCursor( int index ) {
             generateVertices( index, *cursorInfo[ size_t( index ) ] );
         }
     // Write coordinates to GPU
+    if (!m_marker.isCreated())
+        return;
     makeCurrent();
     m_marker.bind();
     m_marker.write( 0, vaMarker.data(), int( vaMarker.size() * sizeof( Vertices ) ) );
+    update();
 }
 
 
 void GlScope::paintGL() {
     if ( !shaderCompileSuccess )
         return;
+
+    if (pendingFrame) {
+        // Qt has already made this view's context current. Coalesce arriving
+        // frames until painting; phosphor history records displayed frames.
+        const auto historyDepth = std::max(1u, view->digitalPhosphorDraws());
+        while (m_GraphHistory.size() > historyDepth)
+            m_GraphHistory.pop_back();
+        if (m_GraphHistory.size() < historyDepth)
+            m_GraphHistory.emplace_back();
+        m_GraphHistory.splice(m_GraphHistory.begin(), m_GraphHistory, std::prev(m_GraphHistory.end()));
+        m_GraphHistory.front().writeData(pendingFrame.get(), m_program.get(), vertexLocation);
+        pendingFrame.reset();
+    }
 
     auto *gl = context()->functions();
 
@@ -665,6 +660,7 @@ void GlScope::generateGrid( int index, double value, bool pressed ) {
     QOpenGLShaderProgram *program = m_program.get();
     if ( program == nullptr )
         return;
+    makeCurrent();
 
     for ( int iii = 0; iii < gridItems; ++iii )
         gridDrawCounts[ iii ] = 0;
@@ -804,6 +800,7 @@ void GlScope::generateGrid( int index, double value, bool pressed ) {
 
     m_grid.allocate( &vaGrid[ 0 ], int( vaGrid.size() * sizeof( QVector3D ) ) );
     m_grid.release();
+    update();
 }
 
 

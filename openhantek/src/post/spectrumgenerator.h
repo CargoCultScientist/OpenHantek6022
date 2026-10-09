@@ -38,6 +38,11 @@ class SpectrumGenerator : public Processor {
     fftw_plan fftPlan_HC2R = nullptr;
     int forwardPlanSize = 0;
     int inversePlanSize = 0;
+    using FftBuffer = std::unique_ptr<double, decltype(&fftw_free)>;
+    FftBuffer fftInput {nullptr, &fftw_free};
+    FftBuffer fftOutput {nullptr, &fftw_free};
+    size_t fftBufferSize = 0;
+    bool ensureFftBuffers(size_t sampleCount);
     QString note;
     const QString &calculateNote( double frequency );
     // Processor interface
