@@ -22,6 +22,7 @@ struct DSOsamples {
     bool freeRunning = false;                  ///< trigger: NONE, half sample count
     unsigned tag = 0;                          ///< track individual sample blocks (debug support)
     std::uint64_t armGeneration = 0;
+    std::uint64_t setupRequest = 0;
     qint64 capturedAtMs = 0;
     mutable QReadWriteLock lock;
 
@@ -39,6 +40,7 @@ struct DSOsamples {
         copy->freeRunning = freeRunning;
         copy->tag = tag;
         copy->armGeneration = armGeneration;
+        copy->setupRequest = setupRequest;
         copy->capturedAtMs = capturedAtMs;
         return copy;
     }

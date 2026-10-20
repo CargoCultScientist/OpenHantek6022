@@ -448,6 +448,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
     connect( this, &MainWindow::settingsLoaded, triggerDock, &TriggerDock::loadSettings );
     connect( this, &MainWindow::settingsLoaded, dsoControl, &HantekDsoControl::applySettings );
     connect( this, &MainWindow::settingsLoaded, dsoWidget, &DsoWidget::updateSlidersSettings );
+    initializeSetupAssistant(dsoControl, voltageDock, horizontalDock, triggerDock);
 
     connect( ui->actionOpen, &QAction::triggered, this, [ this, spec ]() {
         QString configFileName = QFileDialog::getOpenFileName( this, tr( "Open file" ), "", tr( "Settings (*.conf)" ), nullptr,
@@ -499,6 +500,7 @@ MainWindow::MainWindow( HantekDsoControl *dsoControl, DsoSettings *settings, Exp
         DsoConfigDialog *configDialog = new DsoConfigDialog( dsoSettings, this );
         connect(configDialog, &DsoConfigDialog::settingsApplied, dsoWidget, &DsoWidget::refreshDisplaySettings);
         connect(configDialog, &DsoConfigDialog::settingsApplied, dsoControl, &HantekDsoControl::requestDisplayRefresh);
+        connect(configDialog, &DsoConfigDialog::settingsApplied, this, [this] { invalidateSetupAssistant(); });
         configDialog->setModal( true );
         configDialog->show();
     } );
@@ -783,6 +785,7 @@ void MainWindow::updateAcquisitionStatus() {
         : single ? tr("Rearm SINGLE for a fresh capture. Change the trigger mode to Auto to run continuously.")
         : tr("Run acquisition with the current trigger settings."));
     ui->actionSampling->setStatusTip(ui->actionSampling->toolTip());
+    updateSetupAvailability();
 }
 
 
@@ -809,6 +812,7 @@ void MainWindow::showNewData( std::shared_ptr< PPresult > newData ) {
         qDebug() << "     MainWindow::showNewData()" << newData->tag;
     dsoWidget->showNew( newData );
     captureDock->ingest(newData);
+    inspectSetupFrame(*newData);
 }
 
 
@@ -831,6 +835,7 @@ void MainWindow::deviceConnectionStateChanged( DeviceConnectionState state, cons
     deviceAvailable = available;
     if (!available)
         samplingActive = false;
+    invalidateSetupAssistant();
 
     setDeviceCommandUiEnabled( available );
 

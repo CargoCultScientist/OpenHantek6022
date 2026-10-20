@@ -9,6 +9,7 @@
 #include <memory>
 
 #include "scopesettings.h"
+#include "lab/autosetup.h"
 #include "usb/devicereconnectionsupervisor.h"
 
 class SpectrumGenerator;
@@ -23,6 +24,7 @@ class VoltageDock;
 class QAction;
 class QLabel;
 class QTabWidget;
+class QTimer;
 namespace Lab { class CaptureDock; }
 
 namespace Ui {
@@ -72,6 +74,27 @@ class MainWindow : public QMainWindow {
     void createWorkspace(HantekDsoControl *control, TriggerDock *triggerDock);
     void updateAcquisitionStatus();
     void restoreWorkspaceLayout();
+    void initializeSetupAssistant(HantekDsoControl *, VoltageDock *, HorizontalDock *, TriggerDock *);
+    void invalidateSetupAssistant(bool forgetUndo = true);
+    void updateSetupAvailability();
+    void inspectSetupFrame(const PPresult &frame);
+    void applySetupValues(const Lab::SetupValues &values, bool restoreRate);
+    HantekDsoControl *setupControl = nullptr;
+    VoltageDock *setupVoltageDock = nullptr;
+    HorizontalDock *setupHorizontalDock = nullptr;
+    TriggerDock *setupTriggerDock = nullptr;
+    QAction *autoSetupAction = nullptr, *undoSetupAction = nullptr;
+    QLabel *signalHint = nullptr;
+    QTimer *setupTimeout = nullptr;
+    quint64 setupRequest = 0;
+    unsigned setupFrameCount = 0, setupLastTag = 0, hintRepeats = 0;
+    qint64 setupLastTime = 0;
+    bool autoWaiting = false, autoApplying = false, setupUndoAvailable = false;
+    bool setupSamplingActive = false;
+    QByteArray setupExpected, setupUndoExpected;
+    QString hintCandidate;
+    Lab::SetupValues setupBefore, setupUndo;
+    QElapsedTimer hintClock, hintFreshness;
 
     // Settings used for the whole program
     DsoSettings *dsoSettings;

@@ -806,6 +806,7 @@ void HantekDsoControl::convertRawDataToSamples() {
     result.freeRunning = freeRunning;
     result.tag = raw.tag;
     result.armGeneration = raw.armGeneration;
+    result.setupRequest = raw.setupRequest;
     result.capturedAtMs = raw.capturedAtMs;
     result.samplerate = raw.samplerate / raw.oversampling;
     // Prepare result buffers

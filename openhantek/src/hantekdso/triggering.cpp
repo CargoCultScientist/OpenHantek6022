@@ -165,6 +165,7 @@ bool Triggering::provideTriggeredData( DSOsamples &result ) {
         triggeredResult.tag = result.tag;
         triggeredResult.capturedAtMs = result.capturedAtMs;
         triggeredResult.armGeneration = result.armGeneration;
+        triggeredResult.setupRequest = result.setupRequest;
         triggeredResult.pulseWidth1 = result.pulseWidth1;
         triggeredResult.pulseWidth2 = result.pulseWidth2;
         triggeredResult.mathVoltageUnit = result.mathVoltageUnit;
@@ -178,6 +179,7 @@ bool Triggering::provideTriggeredData( DSOsamples &result ) {
         result.tag = triggeredResult.tag;
         result.capturedAtMs = triggeredResult.capturedAtMs;
         result.armGeneration = triggeredResult.armGeneration;
+        result.setupRequest = triggeredResult.setupRequest;
         result.pulseWidth1 = triggeredResult.pulseWidth1;
         result.pulseWidth2 = triggeredResult.pulseWidth2;
         result.mathVoltageUnit = triggeredResult.mathVoltageUnit;

@@ -62,6 +62,7 @@ class PPresult {
     double pulseWidth2 = 0.0;  ///< The width of the following pulse
     unsigned tag = 0;          ///< track individual sample blocks (debug support)
     qint64 capturedAtMs = 0;    ///< acquisition completion time (wall clock, not sample-clock synchronization)
+    quint64 setupRequest = 0;   ///< acquisition-start fence for Auto setup and live hints
 
     ChannelsGraphs vaChannelSpectrum;
     ChannelsGraphs vaChannelVoltage;
