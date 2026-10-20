@@ -1,5 +1,6 @@
 name: Lab regression tests
 on:
+  workflow_dispatch:
   push:
     branches: [main, 'feature/**', 'codex/**']
   pull_request:
@@ -22,32 +23,22 @@ jobs:
           fetch-depth: 0
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake g++ qt6-base-dev qt6-tools-dev libqt6opengl6-dev libfftw3-dev libusb-1.0-0-dev xvfb libgl1-mesa-dri
-      - name: Configure
-        if: matrix.configuration == 'debug'
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-      - name: Configure sanitizers
-        if: matrix.configuration == 'sanitizers'
-        run: >-
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g1"
-          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
-      - name: Configure optimized build
-        if: matrix.configuration == 'release'
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Configure using shared developer preset
+        run: cmake --preset linux-${{ matrix.configuration }}
       - name: Build
-        run: cmake --build build -j2
+        run: cmake --build --preset linux-${{ matrix.configuration }}
       - name: Test
         env:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --preset linux-${{ matrix.configuration }}
       - name: Verify integrated workspace with software OpenGL
         if: matrix.configuration != 'sanitizers'
         env:
           QT_QPA_PLATFORM: xcb
           LIBGL_ALWAYS_SOFTWARE: '1'
           OH_GUI_SCREENSHOT: ${{ runner.temp }}/workspace.png
-        run: xvfb-run -a -s '-screen 0 1920x1080x24' build/openhantek/oh_regression integratedGuiSmoke
+        run: xvfb-run -a -s '-screen 0 1920x1080x24' build/linux-${{ matrix.configuration }}/openhantek/oh_regression integratedGuiSmoke
       - name: Upload workspace previews
         if: always() && matrix.configuration != 'sanitizers'
         uses: actions/upload-artifact@v4
@@ -61,5 +52,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: OpenHantekLab-linux-${{ matrix.configuration }}
-          path: build/openhantek/OpenHantekLab
+          path: build/linux-${{ matrix.configuration }}/openhantek/OpenHantekLab
           retention-days: 14

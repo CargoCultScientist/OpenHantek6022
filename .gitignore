@@ -12,6 +12,11 @@ build
 firmware/hex
 .cache
 *.json
+!/CMakePresets.json
+!/.vscode/settings.json
+!/.vscode/extensions.json
+!/.vscode/tasks.json
+!/.vscode/launch.json
 *.kate-swp
 .directory
 *.autosave

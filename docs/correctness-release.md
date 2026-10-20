@@ -1,5 +1,9 @@
 # OpenHantek Lab correctness release candidate
 
+Historical release notes for the earlier correctness-only snapshot. The current
+`main` source includes Capture Lab and the library as well; see
+[LAB.md](../LAB.md) and the [current feature audit](feature-audit.md).
+
 This is an experimental, Linux-first correctness release based on upstream
 OpenHantek6022 3.4.1-rc2. It builds a separate `OpenHantekLab` executable and uses
 separate settings/calibration storage. Existing OpenHantek installations are untouched.
@@ -30,5 +34,5 @@ certification. Physical USB timing, repeated real-device SINGLE captures, unplug
 and known-source measurement accuracy still need validation. Windows/macOS packaging
 has not been validated. The acquisition pipeline is not gapless.
 
-Capture history, reference comparison and the expanded measurement panel are developed
-separately on `feature/correctness-and-captures`, on top of this correctness base.
+Capture history, reference comparison and the expanded measurement panel were
+developed on `feature/correctness-and-captures` and subsequently integrated.

@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "OpenHantek Lab: demo (Linux)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/linux-debug/openhantek/OpenHantekLab",
+      "args": ["--demoMode"],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "preLaunchTask": "Lab: build debug"
+    },
+    {
+      "name": "OpenHantek Lab: connected scope (Linux)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/linux-debug/openhantek/OpenHantekLab",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "preLaunchTask": "Lab: build debug"
+    }
+  ]
+}

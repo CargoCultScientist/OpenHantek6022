@@ -1,0 +1,62 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Lab: configure debug",
+      "type": "process",
+      "command": "cmake",
+      "args": ["--preset", "linux-debug"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Lab: build debug",
+      "type": "process",
+      "command": "cmake",
+      "args": ["--build", "--preset", "linux-debug"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "dependsOn": "Lab: configure debug",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "Lab: test debug",
+      "type": "process",
+      "command": "ctest",
+      "args": ["--preset", "linux-debug"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "dependsOn": "Lab: build debug",
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Lab: run demo",
+      "type": "process",
+      "command": "${workspaceFolder}/build/linux-debug/openhantek/OpenHantekLab",
+      "args": ["--demoMode"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "dependsOn": "Lab: build debug",
+      "problemMatcher": []
+    },
+    {
+      "label": "Lab: GUI smoke test (Linux + Xvfb)",
+      "type": "process",
+      "command": "xvfb-run",
+      "args": [
+        "-a", "-s", "-screen 0 1920x1080x24",
+        "${workspaceFolder}/build/linux-debug/openhantek/oh_regression",
+        "integratedGuiSmoke"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "QT_QPA_PLATFORM": "xcb",
+          "LIBGL_ALWAYS_SOFTWARE": "1",
+          "OH_GUI_SCREENSHOT": "${workspaceFolder}/build/linux-debug/workspace.png"
+        }
+      },
+      "dependsOn": "Lab: build debug",
+      "problemMatcher": []
+    }
+  ]
+}
