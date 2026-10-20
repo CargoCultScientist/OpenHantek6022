@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=OpenHantek Lab
+Comment=Experimental USB oscilloscope workbench
+Exec=OpenHantekLab
+Icon=io.github.CargoCultScientist.OpenHantekLab
+Terminal=false
+Type=Application
+Categories=Science;Electronics;Engineering;
+Keywords=oscilloscope;Hantek;DSO;electronics;

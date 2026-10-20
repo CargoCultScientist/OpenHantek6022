@@ -27,8 +27,11 @@ if (UNIX)
     if (CMAKE_SYSTEM_NAME MATCHES "Linux")
         set(CPACK_TARGET "")
         set(CPACK_GENERATOR ${CPACK_GENERATOR} DEB RPM)
+        file(READ "${CMAKE_SOURCE_DIR}/utils/udev_rules/60-openhantek.rules" LAB_UDEV_RULES)
+        string(REPLACE "openhantek_rules_end" "openhanteklab_rules_end" LAB_UDEV_RULES "${LAB_UDEV_RULES}")
+        file(WRITE "${CMAKE_BINARY_DIR}/60-openhanteklab.rules" "${LAB_UDEV_RULES}")
         install(
-            FILES utils/udev_rules/60-openhantek.rules
+            FILES "${CMAKE_BINARY_DIR}/60-openhanteklab.rules"
             DESTINATION lib/udev/rules.d
         )
     elseif(CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
@@ -37,6 +40,7 @@ if (UNIX)
         install(
             FILES utils/devd_rules_freebsd/openhantek.conf
             DESTINATION etc/devd
+            RENAME openhanteklab.conf
         )
     elseif(APPLE)
         set(CPACK_TARGET "macos_")
@@ -45,21 +49,23 @@ if (UNIX)
     # install documentation
     FILE(GLOB PDF "docs/*.pdf")
     install(
-        FILES CHANGELOG LICENSE README ${PDF}
-        DESTINATION share/doc/openhantek
+        FILES CHANGELOG LICENSE README README.md LAB.md ${PDF}
+        DESTINATION share/doc/openhanteklab
     )
     # install application starter and icons
     install(
-        FILES utils/applications/org.openhantek.OpenHantek.desktop
+        FILES utils/applications/io.github.CargoCultScientist.OpenHantekLab.desktop
         DESTINATION share/applications
         )
     install(
         FILES openhantek/res/images/OpenHantek.png
         DESTINATION share/icons/hicolor/48x48/apps
+        RENAME io.github.CargoCultScientist.OpenHantekLab.png
     )
     install(
         FILES openhantek/res/images/OpenHantek.svg
         DESTINATION share/icons/hicolor/scalable/apps
+        RENAME io.github.CargoCultScientist.OpenHantekLab.svg
     )
 
 elseif(MSVC)
@@ -72,7 +78,7 @@ elseif(MINGW)
     set(CPACK_ARCH "x64")
 endif()
 
-string(TOLOWER ${CMAKE_PROJECT_NAME} CPACK_PACKAGE_NAME)
+set(CPACK_PACKAGE_NAME "openhanteklab")
 set(CPACK_PACKAGE_VERSION "${PACKAGE_VERSION}")
 
 message(STATUS "CPACK_GENERATOR: ${CPACK_GENERATOR}")
@@ -80,10 +86,10 @@ message(STATUS "CPACK_PACKAGE_NAME: ${CPACK_PACKAGE_NAME}")
 message(STATUS "CPACK_PACKAGE_VERSION: ${CPACK_PACKAGE_VERSION}")
 message(STATUS "CPACK_ARCH: ${CPACK_ARCH}")
 
-set(CPACK_PACKAGE_CONTACT "contact@openhantek.org")
-set(CPACK_PACKAGE_VENDOR "OpenHantek Community")
+set(CPACK_PACKAGE_CONTACT "CargoCultScientist <5445107+CargoCultScientist@users.noreply.github.com>")
+set(CPACK_PACKAGE_VENDOR "OpenHantek Lab contributors")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Digital oscilloscope software for Hantek DSO6022 USB hardware")
-set(CPACK_PACKAGE_DESCRIPTION "OpenHantek is an oscilloscope software for\nVoltcraft/Darkwire/Protek/Acetech/Hantek USB devices")
+set(CPACK_PACKAGE_DESCRIPTION "OpenHantek Lab is an experimental oscilloscope workbench based on OpenHantek6022.")
 set(CPACK_RESOURCE_FILE_README "${CMAKE_SOURCE_DIR}/README.md")
 if (EXISTS "${CMAKE_SOURCE_DIR}/LICENSE")
     set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
@@ -96,12 +102,7 @@ include(CMakeDetermineSystem)
 # Linux DEB (tested on debian stable "trixie")
 # Architecture for package and file name are automatically detected
 set(CPACK_DEBIAN_PACKAGE_SECTION "electronics")
-# do not detect depencencies and versions automatically
-# set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
-# use deb stable packages without version explicitely to support also legacy installations
-# local build uses Debian stable (currently "trixie")
-# CI build (github actions) uses Ubuntu 24.04 LTS as long as Debian "trixie" is "stable"
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "libfftw3-double3, libqt6core6, libqt6gui6, libqt6widgets6, libqt6opengl6, libqt6openglwidgets6, libqt6printsupport6, libusb-1.0-0")
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 message( "-- Depends: ${CPACK_DEBIAN_PACKAGE_DEPENDS}" )
 
 set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
@@ -117,7 +118,7 @@ set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
 set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY 0)
 set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}_${CPACK_PACKAGE_VERSION}_${CPACK_TARGET}${CPACK_ARCH}")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY ".")
-SET(CPACK_OUTPUT_FILE_PREFIX packages)
+set(CPACK_OUTPUT_FILE_PREFIX "${CMAKE_BINARY_DIR}/packages")
 
 include(CPack)
 set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")

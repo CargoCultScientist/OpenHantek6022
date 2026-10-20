@@ -16,7 +16,7 @@ planned integrated capability. This is a source/test audit, not hardware certifi
 | Plan | Status | Evidence and remaining work |
 | --- | --- | --- |
 | 0.1 Baseline build | Implemented for Linux | `CMakeLists.txt`, `openhantek/CMakeLists.txt`, Lab CI; separate `OpenHantekLab` binary and demo. |
-| 0.2 Fork identity | Partial | Separate executable/settings and preserved setup files. CPack, desktop/udev names and macOS identity remain upstream; no first-run settings/calibration importer. |
+| 0.2 Fork identity | Partial | Separate executable/settings, CPack/desktop/icon/udev/documentation names and macOS bundle identity. Debian package install checks in CI; no first-run settings/calibration importer or cross-platform packaging certification. |
 | 0.3 Build hygiene, tests, CI | Partial | C++17, explicit translation-update target, no release `-fno-rtti`, two regression executables, Debug/Release/ASan/UBSan CI. This project setup adds shared presets. No TSan preset/clean ten-minute run or scoped formatting CI. |
 | 0.4 Standalone analysis library | Missing | Algorithms live under `src/lab` and `ohcore`; there is no independent widget-free `ohanalysis` target. |
 | 0.5 Immutable frames/settings | Partial | Owned queued samples, immutable Lab capture pointers, SINGLE generation and calibration guards. `captureSetup` remains receipt-time UI context; no complete immutable acquisition settings snapshot or proven race-free pipeline. |

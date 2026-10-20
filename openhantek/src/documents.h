@@ -13,9 +13,9 @@ const QString FrequencyGeneratorModificationName( "HANTEK6022_Frequency_Generato
 #if defined( Q_OS_WIN )
 const QString DocPath( "documents\\" );
 #elif defined( Q_OS_FREEBSD )
-const QString DocPath( "/usr/local/share/doc/openhantek/" );
+const QString DocPath( "/usr/local/share/doc/openhanteklab/" );
 #else
-const QString DocPath( "/usr/share/doc/openhantek/" );
+const QString DocPath( "/usr/share/doc/openhanteklab/" );
 #endif
 
 // GitHub doc location
