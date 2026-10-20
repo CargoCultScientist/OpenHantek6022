@@ -21,6 +21,10 @@ https://github.com/CargoCultScientist/OpenHantek6022.
 - Command objects have a virtual destructor for safe shutdown. Demo devices reuse
   the registered model rather than leaving dangling registry entries.
 
+For a ready-to-open editor project, see [the VS Code guide](docs/vscode.md).
+The [feature audit](docs/feature-audit.md) distinguishes shipped functionality from
+the original roadmap; [publishing](docs/publishing.md) covers release readiness.
+
 ## Build and test (Linux)
 
 Requires a C++17 compiler, CMake, Qt6 Widgets/OpenGLWidgets/PrintSupport/Test, FFTW3
@@ -45,12 +49,11 @@ need bench validation. The existing acquisition/display pipeline is not gapless.
 
 ## Capture history, reference comparison and measurements
 
-The correctness-only release is on the fork's `main` branch. The additions below
-started on `feature/correctness-and-captures`, followed by `feature/measurement-spans`.
-The workbench followed on `feature/capture-workbench` and `feature/instrument-ui-patterns`.
-The library followed on `feature/capture-library`; the integrated application
-workspace is on `codex/integrated-workspace`, building on those changes.
-These additions are not silently bundled into the correctness-only release candidate.
+The fork's `main` branch at `efd6291` includes the correctness fixes, capture
+workbench, measurement spans, library and integrated workspace described below.
+They were developed on feature branches and are now integrated. The older
+correctness-only release notes describe an earlier snapshot, not today's full
+source tree.
 
 ### Integrated workspace
 

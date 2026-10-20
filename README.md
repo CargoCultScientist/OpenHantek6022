@@ -7,6 +7,24 @@ safety boundaries and the capture format. The installed upstream app is not repl
 
 The original OpenHantek6022 documentation follows below.
 
+## Develop OpenHantek Lab
+
+Open [OpenHantekLab.code-workspace](OpenHantekLab.code-workspace) in Visual Studio
+Code. The [VS Code guide](docs/vscode.md) covers dependencies, build/test tasks,
+demo debugging and hardware debugging. Linux Debug, Release and sanitizer presets
+are shared with the Lab CI workflow.
+
+The publishing repository is
+[CargoCultScientist/OpenHantek6022](https://github.com/CargoCultScientist/OpenHantek6022).
+It retains the upstream history and license. The Lab build checks are
+[here](https://github.com/CargoCultScientist/OpenHantek6022/actions/workflows/lab-tests.yml).
+The upstream badges and installation instructions below describe the original
+project, not a validated OpenHantek Lab release.
+
+**The original feature plan is not complete.** Read the
+[feature audit](docs/feature-audit.md) for the status of every planned item and the
+[publishing checklist](docs/publishing.md) before distributing installers.
+
 ## OpenHantek6022
 [![GitHub CI](https://github.com/OpenHantek/OpenHantek6022/actions/workflows/build.yml/badge.svg)](https://github.com/OpenHantek/OpenHantek6022/actions/workflows/build.yml)
 [![Stability: Active](https://masterminds.github.io/stability/active.svg)](https://masterminds.github.io/stability/active.html)
