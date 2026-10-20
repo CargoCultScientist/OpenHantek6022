@@ -22,7 +22,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake g++ qt6-base-dev qt6-tools-dev libqt6opengl6-dev libfftw3-dev libusb-1.0-0-dev xvfb libgl1-mesa-dri
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ qt6-base-dev qt6-tools-dev libqt6opengl6-dev libfftw3-dev libusb-1.0-0-dev xvfb libgl1-mesa-dri desktop-file-utils
       - name: Configure using shared developer preset
         run: cmake --preset linux-${{ matrix.configuration }}
       - name: Build
@@ -46,6 +46,33 @@ jobs:
           name: workspace-previews-${{ matrix.configuration }}
           path: ${{ runner.temp }}/workspace.png*
           if-no-files-found: ignore
+          retention-days: 14
+      - name: Package and verify Linux release installation
+        if: matrix.configuration == 'release'
+        run: |
+          cpack --config build/linux-release/CPackConfig.cmake -G DEB
+          package=(build/linux-release/packages/*.deb)
+          test "${#package[@]}" -eq 1
+          test "$(dpkg-deb -f "${package[0]}" Package)" = openhanteklab
+          dpkg-deb -f "${package[0]}" Depends
+          test -n "$(dpkg-deb -f "${package[0]}" Depends)"
+          dpkg-deb -x "${package[0]}" "$RUNNER_TEMP/lab-package"
+          root="$RUNNER_TEMP/lab-package/usr"
+          test -x "$root/bin/OpenHantekLab"
+          test ! -e "$root/bin/OpenHantek"
+          test ! -e "$root/share/doc/openhantek"
+          test -f "$root/share/doc/openhanteklab/LICENSE"
+          test -f "$root/lib/udev/rules.d/60-openhanteklab.rules"
+          test -f "$root/share/icons/hicolor/scalable/apps/io.github.CargoCultScientist.OpenHantekLab.svg"
+          desktop-file-validate "$root/share/applications/io.github.CargoCultScientist.OpenHantekLab.desktop"
+          sudo apt-get install -y "${PWD}/${package[0]}"
+          QT_QPA_PLATFORM=offscreen /usr/bin/OpenHantekLab --help
+      - name: Upload verified Debian package
+        if: success() && matrix.configuration == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenHantekLab-ubuntu-24.04-deb
+          path: build/linux-release/packages/*.deb
           retention-days: 14
       - name: Upload verified Linux development binary
         if: success() && matrix.configuration != 'sanitizers'

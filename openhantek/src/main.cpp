@@ -85,6 +85,7 @@ int main( int argc, char *argv[] ) {
     QCoreApplication::setOrganizationName( "OpenHantekLab" );
     QCoreApplication::setOrganizationDomain( "cargocultscientist.github.io" );
     QCoreApplication::setApplicationName( "OpenHantekLab" );
+    QGuiApplication::setDesktopFileName( "io.github.CargoCultScientist.OpenHantekLab" );
     QCoreApplication::setApplicationVersion( VERSION );
 
     bool demoMode = false;

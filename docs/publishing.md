@@ -12,8 +12,10 @@ Work on a `codex/…` or `feature/…` branch, push it and open a pull request t
 developers: Debug, Release and Address/UndefinedBehavior sanitizers. Debug and
 Release also render the integrated workspace under Xvfb/software OpenGL.
 
-After all jobs pass, the workflow exposes Linux development binaries and workspace
-previews as artifacts (14-day retention). These binaries require compatible
+After all jobs pass, the workflow exposes Linux development binaries, an Ubuntu
+24.04 Debian package, and workspace previews as artifacts (14-day retention).
+Release CI extracts and installs the package, validates its desktop entry and
+starts the installed executable with `--help`. These binaries require compatible
 system Qt6, FFTW and libusb libraries; they are not standalone installers.
 They contain the build's source revision in their version string.
 
@@ -21,10 +23,11 @@ They contain the build's source revision in their version string.
 
 - Choose a Lab version and write release notes that match
   [the implemented feature set](feature-audit.md).
-- Finish Lab package identity: CPack still names upstream packages and installs
-  upstream desktop/udev assets; the desktop launcher still invokes `OpenHantek`
-  while the actual executable is `OpenHantekLab`. macOS bundle identity also
-  remains upstream-derived. Validate side-by-side installation and removal.
+- Validate side-by-side installation and removal on real supported systems.
+  CPack now uses `openhanteklab`, a Lab desktop/icon/bundle identity, separate
+  documentation and udev filenames/labels, and the `OpenHantekLab` executable.
+  Debian dependencies are calculated from linked libraries. The USB rules still
+  address the same hardware; two applications must not claim one device together.
 - Review package metadata, maintainership, license declarations and runtime
   dependency resolution. Do not reuse upstream's release badges as Lab claims.
 - Complete a known-source hardware checklist: amplitude/frequency, probe factors,
@@ -38,5 +41,6 @@ They contain the build's source revision in their version string.
 
 The inherited **Build** packaging workflow is manual-only and is not an approved
 Lab release pipeline. Do not run it as a substitute for the packaging work above.
-The project setup and audit do not create a release, install packages or change
-device firmware/calibration.
+No tagged release or local package installation is performed by these changes.
+Firmware and calibration are unchanged. RPM, macOS and Windows packaging remain
+unvalidated; the Debian artifact targets the CI distribution, not every Linux.
