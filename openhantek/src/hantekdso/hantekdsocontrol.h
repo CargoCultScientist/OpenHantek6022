@@ -41,6 +41,7 @@ struct Raw {
     unsigned gainIndex[ 2 ] = { 7, 7 }; // index 0..7
     unsigned tag = 0;
     std::uint64_t armGeneration = 0;
+    std::uint64_t setupRequest = 0;
     qint64 capturedAtMs = 0;
     bool freeRun = false;  // small buffer, no trigger
     bool valid = false;    // samples can be processed
@@ -196,6 +197,7 @@ class HantekDsoControl : public QObject {
     bool calibrationHasChanged = false;
     bool calibrationActive = false;
     SingleCapture singleCapture;
+    std::atomic<std::uint64_t> setupRequest{0};
     unsigned lastTag = UINT32_MAX;
     Dso::TriggerMode lastTriggerMode = Dso::TriggerMode::AUTO;
     std::unique_ptr< QSettings > calibrationSettings;
@@ -236,6 +238,9 @@ class HantekDsoControl : public QObject {
     } while ( 0 )
 
   public slots:
+    // Ordered after settings commands on this object's thread; sampled at the
+    // start of capture, never stamped onto an already acquired/held result.
+    void requestSetupSnapshot(quint64 request) { setupRequest.store(request); }
     // Reprocess the held samples after a display/analysis change, without
     // acquiring new data or changing the current SINGLE arm generation.
     void requestDisplayRefresh() { displayRefreshRequested = true; }
@@ -340,6 +345,7 @@ class HantekDsoControl : public QObject {
     void calibrateOffset( bool enable );
 
   signals:
+    void setupValuesApplied(quint64 request, bool success);
     void showSamplingStatus( bool enabled );                   ///< The oscilloscope started/stopped sampling/waiting for trigger
     void statusMessage( const QString &message, int timeout ); ///< Status message about the oscilloscope
     void samplesAvailable( std::shared_ptr<const DSOsamples> samples ); ///< Immutable, owned frame

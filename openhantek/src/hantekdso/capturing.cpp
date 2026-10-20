@@ -64,6 +64,7 @@ void CapturingThread::xferSamples() {
     hdc->raw.valid = valid;
     hdc->raw.tag = tag;
     hdc->raw.armGeneration = armGeneration;
+    hdc->raw.setupRequest = setupRequest;
     hdc->raw.capturedAtMs = QDateTime::currentMSecsSinceEpoch();
 }
 
@@ -72,6 +73,7 @@ void CapturingThread::capture() {
     if ( !hdc->samplingStarted )
         return;
     armGeneration = hdc->singleCapture.current(); // Includes command application in the acquisition generation.
+    setupRequest = hdc->setupRequest.load();
     QReadLocker deviceLocker( &hdc->scopeDeviceLock );
     ScopeDevice *device = hdc->scopeDevice;
     if ( !device || hdc->deviceConnectionState != HantekDsoControl::DeviceConnectionState::Connected || !device->isConnected() )

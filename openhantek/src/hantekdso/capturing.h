@@ -29,6 +29,7 @@ class CapturingThread : public QThread {
     unsigned gainIndex[ 2 ] = { 0, 0 }; // index 0..7
     unsigned tag = 0;
     std::uint64_t armGeneration = 0;
+    std::uint64_t setupRequest = 0;
     bool valid = true;
     bool freeRun = false;
     std::vector< unsigned char > data;

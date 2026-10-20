@@ -58,6 +58,7 @@ void PostProcessing::convertData( const DSOsamples *source, PPresult *destinatio
     destination->modifiableData( 2 )->voltageUnit = source->mathVoltageUnit; // MATH channel unit
     destination->tag = source->tag;
     destination->capturedAtMs = source->capturedAtMs;
+    destination->setupRequest = source->setupRequest;
 }
 
 

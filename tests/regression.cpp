@@ -18,6 +18,7 @@
 #include "lab/capture.h"
 #include "lab/capturedock.h"
 #include "lab/measurements.h"
+#include "lab/autosetup.h"
 #include "lab/mask.h"
 #include "lab/measurementlog.h"
 #include "lab/capturelibrary.h"
@@ -146,13 +147,14 @@ private slots:
         raw.tag=1; raw.armGeneration=oldArm;
         control.stateMachine();
         QVERIFY(control.isSamplingUI()); // A trigger in the old acquisition must not stop SINGLE.
-        raw.tag=2; raw.armGeneration=control.singleCapture.current();
+        raw.tag=2; raw.armGeneration=control.singleCapture.current(); raw.setupRequest=73;
         QSignalSpy emitted(&control, &HantekDsoControl::samplesAvailable);
         control.stateMachine();
         QVERIFY(!control.isSamplingUI());
         QVERIFY(!emitted.empty());
         auto frame=qvariant_cast<std::shared_ptr<const DSOsamples>>(emitted.back().at(0));
         QCOMPARE(frame->tag, 2u);
+        QCOMPARE(frame->setupRequest, uint64_t(73));
         QVERIFY(frame->liveTrigger);
         control.result.data[0][0] = 9876;
         QVERIFY(frame->data[0][0] != 9876); // Queued processing owns its samples.
@@ -1164,6 +1166,156 @@ private slots:
         control.displayRefreshRequested=false; dialog->apply(); QVERIFY(control.displayRefreshRequested);
         dialog->reject();
         QCOMPARE(control.singleCapture.current(),arm); QVERIFY(!control.isSamplingUI());
+    }
+    void autoSetupAnalysis() {
+        ScopeDevice device; DsoSettings settings(&device); settings.alwaysSave=false;
+        auto &scope=settings.scope;
+        scope.voltage[0].used=true; scope.voltage[1].used=false;
+        scope.voltage[0].gainStepIndex=5; scope.voltage[0].probeAttn=10;
+        scope.voltage[0].trigger=50; scope.horizontal.timebase=.01;
+        scope.trigger.mode=Dso::TriggerMode::NORMAL;
+        PPresult frame(3);
+        auto data=frame.modifiableData(0); data->voltage.interval=1e-6;
+        for(int i=0;i<1000;++i) data->voltage.samples.push_back(2+3*std::sin(2*M_PI*i/100));
+        const auto original=Lab::setupFingerprint(scope);
+        const auto before=Lab::SetupValues::fromScope(scope,2);
+        const auto plan=Lab::planAutoSetup(frame,scope,2);
+        QVERIFY(plan.changed);
+        QCOMPARE(Lab::setupFingerprint(scope),original); // analysis is pure
+        QVERIFY(plan.values.channels[0].voltsPerDiv>=5./3);
+        QVERIFY(plan.values.channels[0].voltsPerDiv<10);
+        QVERIFY(std::abs(plan.values.channels[0].trigger-2)<.01);
+        QVERIFY(plan.values.channels[0].offset<0);
+        const double periods=plan.values.timebase*DIVS_TIME/.0001;
+        QVERIFY(periods>=2.9 && periods<=7.6); // rounded up to a 1-2-5 timebase
+        QCOMPARE(plan.values.mode,Dso::TriggerMode::AUTO);
+        QCOMPARE(plan.values.channels[1].gain,before.channels[1].gain);
+        QVERIFY(plan.hints.join(" ").contains("outside"));
+        plan.values.writeTo(scope);
+        QCOMPARE(scope.voltage[0].probeAttn,10.);
+        QCOMPARE(scope.voltage[1].used,false);
+        before.writeTo(scope);
+        QCOMPARE(Lab::setupFingerprint(scope),original);
+    }
+    void autoSetupUncertainSignals() {
+        ScopeDevice device; DsoSettings settings(&device); settings.alwaysSave=false;
+        auto &scope=settings.scope;
+        scope.voltage[0].used=true; scope.voltage[1].used=false;
+        scope.voltage[0].gainStepIndex=5; scope.voltage[0].probeAttn=1;
+        PPresult frame(3); auto data=frame.modifiableData(0);
+        data->voltage.interval=1e-6; data->voltage.samples.assign(1000,0);
+        auto plan=Lab::planAutoSetup(frame,scope,2);
+        QVERIFY(!plan.changed); QVERIFY(plan.hints.join(" ").contains("little variation"));
+        data->voltage.samples.assign(1000,2.); // DC is not falsely called disconnected
+        plan=Lab::planAutoSetup(frame,scope,2);
+        QVERIFY(!plan.changed); QVERIFY(plan.hints.join(" ").contains("DC"));
+        for(int i=0;i<1000;++i) data->voltage.samples[i]=std::sin(2*M_PI*i/100);
+        data->valid=false;
+        plan=Lab::planAutoSetup(frame,scope,2);
+        QCOMPARE(plan.values.channels[0].gain,scope.voltage[0].gainStepIndex+1);
+        QCOMPARE(plan.values.timebase,scope.horizontal.timebase);
+        QVERIFY(plan.hints.join(" ").contains("clipped"));
+        scope.voltage[0].gainStepIndex=unsigned(scope.gainSteps.size()-1);
+        plan=Lab::planAutoSetup(frame,scope,2);
+        QVERIFY(!plan.changed); QVERIFY(plan.hints.join(" ").contains("widest"));
+        scope.voltage[0].gainStepIndex=5; data->valid=true;
+        for(int i=0;i<1000;++i) data->voltage.samples[i]=std::sin(2*M_PI*i/4);
+        plan=Lab::planAutoSetup(frame,scope,2);
+        QCOMPARE(plan.values.timebase,scope.horizontal.timebase);
+        QVERIFY(plan.hints.join(" ").contains("few samples"));
+        // Deterministic broadband noise must not invent a stable period.
+        uint32_t random=7;
+        for(auto &v:data->voltage.samples) { random=1664525*random+1013904223; v=double(random)/UINT32_MAX-.5; }
+        plan=Lab::planAutoSetup(frame,scope,2);
+        QCOMPARE(plan.values.timebase,scope.horizontal.timebase);
+        QCOMPARE(plan.values.channels[0].trigger,scope.voltage[0].trigger);
+        data->voltage.samples[100]=std::numeric_limits<double>::quiet_NaN();
+        plan=Lab::planAutoSetup(frame,scope,2);
+        QVERIFY(!plan.changed); QVERIFY(plan.hints.join(" ").contains("valid samples"));
+        scope.voltage[0].used=false;
+        QVERIFY(Lab::planAutoSetup(frame,scope,2).hints.join(" ").contains("Enable"));
+    }
+    void autoSetupFenceSurvivesHeldTriggerAndProcessing() {
+        ScopeDevice device; DsoSettings settings(&device); settings.alwaysSave=false;
+        HantekDsoControl control(&device,device.getModel(),0); control.applySettings(&settings.scope);
+        Dso::ControlSettings controlSettings(&device.getModel()->spec()->samplerate.multi,3);
+        controlSettings.trigger.mode=Dso::TriggerMode::NORMAL;
+        Triggering trigger(&settings.scope,controlSettings);
+        DSOsamples frame; frame.data.resize(3); frame.data[0]={0,1,0,-1};
+        frame.samplerate=1e6; frame.setupRequest=41; frame.tag=7; frame.triggeredPosition=1;
+        QVERIFY(trigger.provideTriggeredData(frame));
+        frame.setupRequest=42; frame.tag=8; frame.triggeredPosition=0;
+        QVERIFY(!trigger.provideTriggeredData(frame));
+        QCOMPARE(frame.setupRequest,uint64_t(41)); // held frame cannot inherit new fence
+        auto snapshot=frame.snapshot();
+        frame.setupRequest=99;
+        PostProcessing post(3);
+        QSignalSpy processed(&post,&PostProcessing::processingFinished);
+        QSignalSpy raw(&post,&PostProcessing::rawSamplesReady);
+        post.input(snapshot);
+        QCOMPARE(processed.size(),1); QCOMPARE(raw.size(),1);
+        QCOMPARE(qvariant_cast<std::shared_ptr<PPresult>>(processed[0][0])->setupRequest,quint64(41));
+        QCOMPARE(qvariant_cast<std::shared_ptr<PPresult>>(raw[0][0])->setupRequest,quint64(41));
+    }
+    void workspaceAutoSetup() {
+        ScopeDevice device; DsoSettings settings(&device); settings.alwaysSave=false;
+        settings.scope.voltage[0].used=true; settings.scope.voltage[1].used=false;
+        settings.scope.voltage[0].gainStepIndex=5; settings.scope.voltage[0].probeAttn=1;
+        settings.scope.trigger.mode=Dso::TriggerMode::AUTO;
+        HantekDsoControl control(&device,device.getModel(),0); control.applySettings(&settings.scope);
+        ExporterRegistry registry(device.getModel()->spec(),&settings);
+        MainWindow window(&control,&settings,&registry);
+        QCoreApplication::processEvents();
+        auto action=window.findChild<QAction*>("labAutoSetup");
+        auto undo=window.findChild<QAction*>("labUndoAutoSetup");
+        auto hint=window.findChild<QLabel*>("labSignalHint");
+        QVERIFY(action && undo && hint); QVERIFY(action->isEnabled()); QVERIFY(!undo->isEnabled());
+        const auto before=Lab::setupFingerprint(settings.scope);
+        const auto rate=settings.scope.horizontal.samplerate;
+        auto frame=std::make_shared<PPresult>(3); frame->tag=100;
+        frame->capturedAtMs=QDateTime::currentMSecsSinceEpoch();
+        auto data=frame->modifiableData(0); data->voltage.interval=1e-6;
+        for(int i=0;i<1000;++i) data->voltage.samples.push_back(.3*std::sin(2*M_PI*i/100));
+        frame->setupRequest=control.setupRequest.load();
+        action->trigger(); QCoreApplication::processEvents();
+        window.showNewData(frame); ++frame->tag; window.showNewData(frame);
+        QCOMPARE(Lab::setupFingerprint(settings.scope),before); // pre-click data rejected
+        frame->setupRequest=control.setupRequest.load();
+        frame->capturedAtMs-=5000; ++frame->tag; window.showNewData(frame);
+        QCOMPARE(Lab::setupFingerprint(settings.scope),before); // old timestamp rejected too
+        frame->capturedAtMs=QDateTime::currentMSecsSinceEpoch();
+        ++frame->tag; window.showNewData(frame); window.showNewData(frame);
+        QCOMPARE(Lab::setupFingerprint(settings.scope),before); // first + held repaint aren't two captures
+        ++frame->tag; window.showNewData(frame);
+        QTRY_VERIFY(undo->isEnabled());
+        QVERIFY(Lab::setupFingerprint(settings.scope)!=before);
+        QVERIFY(action->isEnabled());
+        QCOMPARE(control.controlsettings.trigger.source,settings.scope.trigger.source);
+        undo->trigger(); QTRY_VERIFY(action->isEnabled());
+        QCOMPARE(Lab::setupFingerprint(settings.scope),before);
+        QCOMPARE(settings.scope.horizontal.samplerate,rate);
+        QVERIFY(!undo->isEnabled());
+
+        action->trigger(); QCoreApplication::processEvents();
+        frame->setupRequest=control.setupRequest.load();
+        auto voltage=window.findChild<VoltageDock*>();
+        emit voltage->gainChanged(0,settings.scope.gain(0)); // manual changes cancel
+        ++frame->tag; window.showNewData(frame); ++frame->tag; window.showNewData(frame);
+        QCOMPARE(Lab::setupFingerprint(settings.scope),before);
+        QVERIFY(!undo->isEnabled()); QVERIFY(action->isEnabled());
+        auto timeout=window.findChild<QTimer*>("labAutoSetupTimeout"); QVERIFY(timeout);
+        action->trigger(); QCoreApplication::processEvents(); frame->setupRequest=control.setupRequest.load();
+        QVERIFY(QMetaObject::invokeMethod(timeout,"timeout",Qt::DirectConnection));
+        ++frame->tag; window.showNewData(frame); ++frame->tag; window.showNewData(frame);
+        QCOMPARE(Lab::setupFingerprint(settings.scope),before);
+        QVERIFY(hint->text().contains("timed out"));
+        action->trigger(); control.enableSamplingUI(false);
+        QVERIFY(!action->isEnabled()); QVERIFY(!timeout->isActive());
+        control.enableSamplingUI(true); QVERIFY(action->isEnabled());
+        action->trigger();
+        window.deviceConnectionStateChanged(DeviceConnectionState::Disconnected,"test");
+        QVERIFY(!action->isEnabled()); QVERIFY(!undo->isEnabled()); QVERIFY(!timeout->isActive());
+        QCOMPARE(Lab::setupFingerprint(settings.scope),before);
     }
     void workspaceIntegration() {
         ScopeDevice device; DsoSettings settings(&device); settings.alwaysSave=false;

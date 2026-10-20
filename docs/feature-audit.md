@@ -21,7 +21,7 @@ planned integrated capability. This is a source/test audit, not hardware certifi
 | 0.4 Standalone analysis library | Missing | Algorithms live under `src/lab` and `ohcore`; there is no independent widget-free `ohanalysis` target. |
 | 0.5 Immutable frames/settings | Partial | Owned queued samples, immutable Lab capture pointers, SINGLE generation and calibration guards. `captureSetup` remains receipt-time UI context; no complete immutable acquisition settings snapshot or proven race-free pipeline. |
 | 0.6 Every-frame analysis/display split | Partial | Bounded newest-pending mailbox and reduced hidden/stopped processing exist. History receives displayed acquisitions, not every acquired block; no complete every-frame analysis stream. |
-| 0.7 Settings controller/undo | Missing | Existing dock/MainWindow/controller wiring remains. No `ScopeController`, `SettingsPatch` or unified undo/redo layer. |
+| 0.7 Settings controller/undo | Partial | Auto uses a value-captured controller-thread command batch and guarded one-step undo. Existing manual dock wiring remains; no unified `ScopeController` or undo/redo layer. |
 | 0.8 Synthetic/playground/replay sources | Partial | Demo and synthetic regression data, plus offline capture analysis. No selectable signal playground, source interface or full acquisition-pipeline replay. |
 | 0.9 Gapless streaming feasibility spike | Missing | No async-transfer benchmark tool or supported-rate continuity report. |
 | 0.10 Capture format | Partial / alternative | Versioned `.ohl.json`, validation and atomic round trips exist; this is not the planned ZIP/NumPy `.ohcap`. No `.ohrec`, WAV or `.sr` export. See `lab-capture-format.md`. |
@@ -32,8 +32,8 @@ planned integrated capability. This is a source/test audit, not hardware certifi
 
 | Plan | Status | Evidence and remaining work |
 | --- | --- | --- |
-| 1.1 Auto-setup | Missing | AUTO trigger mode exists but is not automatic channel/range/timebase setup. No planned Auto button/algorithm. |
-| 1.2 Actionable setup hints | Missing | Clipping and measurement validity indicators exist; no debounced diagnosis banners with one-click setup fixes. |
+| 1.1 Auto-setup | Partial | Fresh-capture Auto button fits enabled ranges/offsets and reliable timing/trigger, with one-step undo and cancellation. Clipping widens one range per click. No unattended range/frequency sweep or multi-pass confirmation. See `auto-setup.md`. |
+| 1.2 Actionable setup hints | Partial | Debounced live banner for clipping, DC/little variation, small signals, trigger range and unreliable/undersampled timing, with explicit Auto action. Does not rule out aliasing or diagnose wiring; no per-hint fix buttons. |
 | 1.3 Common measurement span | Partial | Whole record, visible window and cursor gate; shading, per-channel timing and cycle mean/RMS exist in Capture Lab. Legacy scope labels are separate; interactive measurement brackets are absent. |
 | 1.4 “Measure a…” presets | Missing | Setup files exist; no guided preset gallery, wiring diagrams, measurement/decoder recipes or undoable patches. |
 | 1.5 Calibration/probe wizard | Missing | Existing offset calibration has correctness guards; no guided range sweep, gain wizard or probe compensation/mismatch workflow. |

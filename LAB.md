@@ -1,5 +1,8 @@
 # OpenHantek Lab
 
+**New:** [Auto setup and live signal hints](docs/auto-setup.md), with a fresh-capture
+check and one-step Undo Auto. This is a conservative fit, not an unattended sweep.
+
 Experimental fork of OpenHantek6022. Upstream remains
 https://github.com/OpenHantek/OpenHantek6022; this fork is
 https://github.com/CargoCultScientist/OpenHantek6022.
