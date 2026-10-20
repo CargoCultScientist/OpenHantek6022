@@ -8,6 +8,7 @@
 #include "docks/TriggerDock.h"
 #include "docks/SpectrumDock.h"
 #include "hantekdso/hantekdsocontrol.h"
+#include "widgets/levelslider.h"
 #include <QAction>
 #include <QDateTime>
 #include <QLabel>
@@ -208,6 +209,11 @@ void MainWindow::applySetupValues(const Lab::SetupValues &values, bool restoreRa
         // or invalidate the undo entry. One value-captured batch goes below.
         QSignalBlocker voltageBlock(setupVoltageDock), horizontalBlock(setupHorizontalDock),
             triggerBlock(setupTriggerDock), scopeBlock(dsoWidget);
+        // Changing a slider's limits emits valueChanged and can otherwise
+        // overwrite an intentionally preserved, out-of-display trigger level.
+        std::vector<std::unique_ptr<QSignalBlocker>> sliderBlocks;
+        for (auto slider : dsoWidget->findChildren<LevelSlider *>())
+            sliderBlocks.push_back(std::make_unique<QSignalBlocker>(slider));
         for (unsigned ch = 0; ch < values.channels.size(); ++ch) {
             setupVoltageDock->setGain(ch, values.channels[ch].gain);
             dsoWidget->updateVoltageGain(ch);
