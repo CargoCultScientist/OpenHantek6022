@@ -1317,6 +1317,70 @@ private slots:
         QVERIFY(!action->isEnabled()); QVERIFY(!undo->isEnabled()); QVERIFY(!timeout->isActive());
         QCOMPARE(Lab::setupFingerprint(settings.scope),before);
     }
+    void workspaceQueuedAutoSetup() {
+        ScopeDevice device; DsoSettings settings(&device); settings.alwaysSave=false;
+        settings.scope.voltage[0].used=true; settings.scope.voltage[1].used=false;
+        settings.scope.voltage[0].gainStepIndex=5; settings.scope.voltage[0].probeAttn=1;
+        settings.scope.trigger.mode=Dso::TriggerMode::AUTO;
+        HantekDsoControl control(&device,device.getModel(),0); control.applySettings(&settings.scope);
+        ExporterRegistry registry(device.getModel()->spec(),&settings);
+        QThread worker; auto guiThread=QThread::currentThread();
+        struct Cleanup {
+            HantekDsoControl &control; QThread &worker; QThread *guiThread;
+            ~Cleanup() {
+                if (!worker.isRunning()) worker.start();
+                QMetaObject::invokeMethod(&control,[this]{control.moveToThread(guiThread);},Qt::BlockingQueuedConnection);
+                worker.quit(); worker.wait();
+            }
+        } cleanup{control,worker,guiThread};
+        MainWindow window(&control,&settings,&registry);
+        QCoreApplication::processEvents();
+        control.moveToThread(&worker); worker.start();
+        std::atomic<bool> onOwnerThread{false};
+        connect(&control,&HantekDsoControl::setupValuesApplied,&window,[&] {
+            onOwnerThread.store(QThread::currentThread()==&worker);
+        },Qt::DirectConnection);
+        auto action=window.findChild<QAction*>("labAutoSetup");
+        auto undo=window.findChild<QAction*>("labUndoAutoSetup");
+        const auto before=Lab::setupFingerprint(settings.scope);
+        const auto oldRequest=control.setupRequest.load();
+        action->trigger(); QTRY_VERIFY(control.setupRequest.load()>oldRequest);
+        auto frame=std::make_shared<PPresult>(3);
+        frame->setupRequest=control.setupRequest.load();
+        frame->capturedAtMs=QDateTime::currentMSecsSinceEpoch();
+        auto data=frame->modifiableData(0); data->voltage.interval=1e-6;
+        for(int i=0;i<1000;++i) data->voltage.samples.push_back(.3*std::sin(2*M_PI*i/100));
+        frame->tag=1; window.showNewData(frame); frame->tag=2; window.showNewData(frame);
+        QTRY_VERIFY(undo->isEnabled()); QVERIFY(onOwnerThread.load());
+        QVERIFY(Lab::setupFingerprint(settings.scope)!=before);
+        undo->trigger(); QTRY_VERIFY(action->isEnabled());
+        QCOMPARE(Lab::setupFingerprint(settings.scope),before);
+        QVERIFY(!undo->isEnabled());
+    }
+    void signalHintsDebounceAndNeverApply() {
+        ScopeDevice device; DsoSettings settings(&device); settings.alwaysSave=false;
+        settings.scope.voltage[0].used=true; settings.scope.voltage[1].used=false;
+        settings.scope.trigger.mode=Dso::TriggerMode::AUTO;
+        HantekDsoControl control(&device,device.getModel(),0); control.applySettings(&settings.scope);
+        ExporterRegistry registry(device.getModel()->spec(),&settings);
+        MainWindow window(&control,&settings,&registry); QCoreApplication::processEvents();
+        auto hint=window.findChild<QLabel*>("labSignalHint");
+        auto frame=std::make_shared<PPresult>(3);
+        frame->setupRequest=control.setupRequest.load();
+        auto data=frame->modifiableData(0); data->voltage.interval=1e-6;
+        data->voltage.samples.assign(1000,0);
+        const auto before=Lab::setupFingerprint(settings.scope);
+        for(unsigned tag=1;tag<=4;++tag) {
+            QTest::qWait(270);
+            frame->capturedAtMs=QDateTime::currentMSecsSinceEpoch(); frame->tag=tag;
+            window.showNewData(frame);
+            if(tag<4) QVERIFY(!hint->text().startsWith("Live signal:"));
+        }
+        QVERIFY(hint->text().contains("little variation"));
+        QCOMPARE(Lab::setupFingerprint(settings.scope),before);
+        QTest::qWait(3100);
+        QVERIFY(hint->text().contains("No recent live capture"));
+    }
     void workspaceIntegration() {
         ScopeDevice device; DsoSettings settings(&device); settings.alwaysSave=false;
         // An old saved layout must not hide the new central workbench or be

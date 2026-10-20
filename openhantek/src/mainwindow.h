@@ -90,6 +90,7 @@ class MainWindow : public QMainWindow {
     unsigned setupFrameCount = 0, setupLastTag = 0, hintRepeats = 0;
     qint64 setupLastTime = 0;
     bool autoWaiting = false, autoApplying = false, setupUndoAvailable = false;
+    bool setupSamplingActive = false;
     QByteArray setupExpected, setupUndoExpected;
     QString hintCandidate;
     Lab::SetupValues setupBefore, setupUndo;

@@ -23,6 +23,7 @@ void MainWindow::initializeSetupAssistant(HantekDsoControl *control, VoltageDock
     setupVoltageDock = voltage;
     setupHorizontalDock = horizontal;
     setupTriggerDock = trigger;
+    setupSamplingActive = samplingActive;
     signalHint = new QLabel(this);
     signalHint->setObjectName("labSignalHint");
     signalHint->setTextFormat(Qt::PlainText);
@@ -71,7 +72,13 @@ void MainWindow::initializeSetupAssistant(HantekDsoControl *control, VoltageDock
     connect(dsoWidget, &DsoWidget::triggerPositionChanged, this, invalidate);
     connect(findChild<SpectrumDock *>(), &SpectrumDock::usedChannelChanged, this, invalidate);
     connect(this, &MainWindow::settingsLoaded, this, invalidate);
-    connect(control, &HantekDsoControl::showSamplingStatus, this, invalidate);
+    connect(control, &HantekDsoControl::showSamplingStatus, this, [this](bool enabled) {
+        // setTriggerMode also reports an unchanged RUNNING state. That is not a
+        // user acquisition change and must not discard Auto's undo/acknowledgment.
+        if (setupSamplingActive == enabled) return;
+        setupSamplingActive = enabled;
+        invalidateSetupAssistant();
+    });
     connect(ui->actionSampling, &QAction::triggered, this, invalidate);
     connect(ui->actionCalibrateOffset, &QAction::toggled, this, invalidate);
     connect(ui->actionManualCommand, &QAction::toggled, this, invalidate);
