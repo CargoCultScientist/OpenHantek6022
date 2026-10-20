@@ -182,6 +182,9 @@ void MainWindow::inspectSetupFrame(const PPresult &frame) {
         autoWaiting = false;
         setupTimeout->stop();
         if (plan.changed) {
+            // A previously queued rate calculation may have reached the GUI
+            // while waiting for captures; retain the now-confirmed old rate.
+            setupBefore.samplerate = dsoSettings->scope.horizontal.samplerate;
             setupUndo = setupBefore;
             setupUndoAvailable = true;
             applySetupValues(plan.values, false);
@@ -207,15 +210,15 @@ void MainWindow::applySetupValues(const Lab::SetupValues &values, bool restoreRa
             triggerBlock(setupTriggerDock), scopeBlock(dsoWidget);
         for (unsigned ch = 0; ch < values.channels.size(); ++ch) {
             setupVoltageDock->setGain(ch, values.channels[ch].gain);
-            dsoWidget->updateVoltageGain(ch, values.channels[ch].voltsPerDiv);
+            dsoWidget->updateVoltageGain(ch);
         }
         setupHorizontalDock->setTimebase(values.timebase);
         setupTriggerDock->timebaseChanged(values.timebase);
         setupTriggerDock->loadSettings(&dsoSettings->scope);
         dsoWidget->updateTimebase(values.timebase);
-        dsoWidget->updateTriggerMode(values.mode);
-        dsoWidget->updateTriggerSource(values.source);
-        dsoWidget->updateTriggerSlope(values.slope);
+        dsoWidget->updateTriggerMode();
+        dsoWidget->updateTriggerSource();
+        dsoWidget->updateTriggerSlope();
         dsoWidget->updateSlidersSettings();
         // Sliders may quantize their visual position; retain the requested values.
         values.writeTo(dsoSettings->scope);

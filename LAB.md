@@ -42,9 +42,10 @@ build/openhantek/OpenHantekLab --demoMode
 
 The binary and settings organization are `OpenHantekLab`. Upstream settings and
 calibration files are not automatically imported or modified. Explicitly open a
-compatible setup to reuse it. Existing installations remain untouched. For this
-development phase, run the binary directly; upstream packaging assets are not a
-validated Lab installer. Windows/macOS are not yet validated.
+compatible setup to reuse it. Existing installations remain untouched. Development
+CI also produces an Ubuntu 24.04 Debian package with separate Lab identities and
+an installation check; see [publishing](docs/publishing.md). Windows/macOS and
+other distributions are not yet validated.
 
 These tests use synthetic samples and temporary configuration. Passing them is not
 hardware certification: real USB timing, unplug/reconnect and SINGLE rearming still

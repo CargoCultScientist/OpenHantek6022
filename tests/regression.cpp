@@ -1619,6 +1619,24 @@ private slots:
         QCOMPARE(scroll->horizontalScrollBar()->maximum(),0);
         QCOMPARE(scroll->verticalScrollBar()->maximum(),0);
         QVERIFY(window.grab().save(qEnvironmentVariable("OH_GUI_SCREENSHOT")+".compact.png"));
+        auto autoSetup=window.findChild<QAction*>("labAutoSetup");
+        auto undoSetup=window.findChild<QAction*>("labUndoAutoSetup");
+        QVERIFY(autoSetup && undoSetup && autoSetup->isEnabled());
+        autoSetup->trigger(); QCoreApplication::processEvents();
+        frame=std::make_shared<PPresult>(*frame);
+        frame->setupRequest=control.setupRequest.load();
+        frame->capturedAtMs=QDateTime::currentMSecsSinceEpoch();
+        frame->tag=75; window.showNewData(frame);
+        frame=std::make_shared<PPresult>(*frame);
+        frame->tag=76; window.showNewData(frame);
+        QTRY_VERIFY(undoSetup->isEnabled());
+        // Render the new scales using the same physical samples, then show the
+        // actual assistant banner and Undo state in the compact workspace.
+        static_cast<Processor&>(spectrum).process(frame.get());
+        static_cast<Processor&>(graphs).process(frame.get());
+        window.showNewData(frame); QTest::qWait(200);
+        QCOMPARE(scroll->horizontalScrollBar()->maximum(),0);
+        QVERIFY(window.grab().save(qEnvironmentVariable("OH_GUI_SCREENSHOT")+".auto.png"));
         dock->findChild<QCheckBox*>("labCollectLog")->setChecked(true);
         frame=std::make_shared<PPresult>(*frame); frame->tag=74; frame->capturedAtMs+=100; window.showNewData(frame);
         QTimer::singleShot(0,[] {
